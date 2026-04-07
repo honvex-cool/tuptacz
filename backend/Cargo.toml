@@ -1,0 +1,11 @@
+[package]
+name = "tuptacz"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.4", features = ["ws"] }
+tokio = { version = "1.0", features = ["full"] }
+futures-util = "0.3.31"
+serde_json = "1.0.149"
+serde = { version = "1.0.228", features = ["derive"] }
