@@ -1,5 +1,7 @@
-pub trait Algo<I, E, R> {
-    fn init(input: I) -> (Vec<E>, Self);
-    fn step(&mut self) -> Vec<E>;
-    fn result(&self) -> Option<R>;
+pub trait InteractiveAlgo<I> {
+    type Event;
+    type Result;
+    fn init(input: I) -> (Vec<Self::Event>, Self);
+    fn step(&mut self) -> Vec<Self::Event>;
+    fn result(&self) -> Option<Self::Result>;
 }
