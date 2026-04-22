@@ -7,10 +7,22 @@ pub struct Vertex<V, E> {
     pub edges: Vec<Edge<E>>,
 }
 
+impl<V, E> Vertex<V, E>
+where V: Default
+{
+    pub fn new(id: usize) -> Self {
+        Self {
+            id,
+            properties: V::default(),
+            edges: vec![]
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Edge<E> {
     pub id: usize,
-    pub end_index: usize,
+    pub end_id: usize,
     pub properties: E,
 }
 

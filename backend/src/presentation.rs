@@ -1,13 +1,15 @@
-use std::future::Future;
-
 use serde::{Deserialize, Serialize};
 
 use crate::graphs::Graph;
 
 #[derive(Serialize, Deserialize)]
-pub enum HighlightMode {}
+pub enum HighlightMode {
+    Visited,
+    Awaiting
+}
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum ServerAction<V, E> {
     InitGraph {
         graph: Graph<V, E>,
@@ -37,8 +39,4 @@ pub enum ServerAction<V, E> {
 pub struct GraphEvent<V, E> {
     pub action: ServerAction<V, E>,
     pub comment: String,
-}
-
-pub trait EventClient<V, E> {
-    fn consume(&mut self, event: &GraphEvent<V, E>) -> impl Future<Output = ()> + Send;
 }

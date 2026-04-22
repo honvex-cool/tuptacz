@@ -1,11 +1,8 @@
+use crate::algo::{EventClient, InteractiveAlgo};
+use crate::graphs::Graph;
+use crate::presentation::{GraphEvent, HighlightMode, ServerAction};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::sync::Arc;
-
-use crate::algo::InteractiveAlgo;
-use crate::graphs::Graph;
-use crate::presentation::{EventClient, GraphEvent, ServerAction};
-
 
 pub type Num = i64;
 
@@ -39,29 +36,56 @@ impl PartialOrd for Route {
     }
 }
 
-pub struct Dijkstra<V, E, C>
+pub struct Dijkstra<V, E>
 where
     E: Distance,
-    C: EventClient<V, E>,
 {
-    graph: Arc<Graph<V, E>>,
+    graph: Graph<V, E>,
     distances: Vec<Num>,
     pending_routes: BinaryHeap<Route>,
-    client: C,
 }
 
-impl<'a, V, E, C> InteractiveAlgo<(Arc<Graph<V, E>>, usize), C> for Dijkstra<V, E, C>
+impl<V, E> Dijkstra<V, E>
 where
     V: Clone,
     E: Distance + Clone,
-    C: EventClient<V, E>,
+{
+    fn highlight_visited<C>(&self, vertex_id: usize, client: &mut C)
+    where
+        C: EventClient<GraphEvent<V, E>>,
+    {
+        client.consume(GraphEvent {
+            action: ServerAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Visited,
+            },
+            comment: "Visited vertex".to_owned(),
+        });
+    }
+
+    fn highlight_awaiting<C>(&self, vertex_id: usize, client: &mut C)
+    where
+        C: EventClient<GraphEvent<V, E>>,
+    {
+        client.consume(GraphEvent {
+            action: ServerAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Awaiting,
+            },
+            comment: "Put vertex to queue".to_owned(),
+        });
+    }
+}
+
+impl<V, E, C> InteractiveAlgo<(Graph<V, E>, usize), GraphEvent<V, E>, C> for Dijkstra<V, E>
+where
+    V: Clone,
+    E: Distance + Clone,
+    C: EventClient<GraphEvent<V, E>>,
 {
     type Result = Vec<Num>;
 
-    async fn init(
-        (graph, source_index): (Arc<Graph<V, E>>, usize),
-        mut client: C,
-    ) -> Self {
+    fn init((graph, source_index): (Graph<V, E>, usize), client: &mut C) -> Self {
         let source_route = Route {
             destination_index: source_index,
             total_distance: 0,
@@ -72,19 +96,21 @@ where
         let mut distances = vec![Num::MAX; graph.len()];
         distances[source_index] = 0;
 
-        client.consume(
-            &GraphEvent { action: ServerAction::InitGraph { graph: graph.to_vec() }, comment: String::new() }
-        ).await;
+        client.consume(GraphEvent {
+            action: ServerAction::InitGraph {
+                graph: graph.clone(),
+            },
+            comment: "Graph created".to_owned(),
+        });
 
         Self {
             graph,
             distances,
             pending_routes,
-            client
         }
     }
 
-    fn step(&mut self) {
+    fn step(&mut self, client: &mut C) {
         let Some(route) = self.pending_routes.pop() else {
             return;
         };
@@ -93,8 +119,10 @@ where
             return;
         }
 
+        self.highlight_visited(route.destination_index, client);
+
         for edge in &self.graph[route.destination_index].edges {
-            let neighbor_index = edge.end_index;
+            let neighbor_index = edge.end_id;
             let neighbor_distance = &mut self.distances[neighbor_index];
 
             let new_total_distance = route.total_distance + edge.properties.distance();
@@ -107,6 +135,7 @@ where
                     total_distance: *neighbor_distance,
                 };
                 self.pending_routes.push(new_route);
+                self.highlight_awaiting(new_route.destination_index, client);
             }
         }
     }

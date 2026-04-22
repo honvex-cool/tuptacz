@@ -1,17 +1,58 @@
 export const ws = new WebSocket("ws://localhost:3000/ws");
 
-export interface AddNodeEvent {
-    eventType: "ADD_NODE"
-    nodeId: string
+export interface Edge {
+    id: number
+    end_id: number
+    properties: any
 }
 
-export interface AddEdgeEvent {
-    eventType: "ADD_EDGE"
-    startNodeId: string
-    endNodeId
+export interface Vertex {
+    id: number
+    properties: any
+    edges: Edge[]
 }
 
-export type Event = AddNodeEvent | AddEdgeEvent
+export type Graph = Vertex[];
+
+export interface InitGraphAction {
+    type: "InitGraph"
+    graph: Graph
+}
+
+export interface AddNodeAction {
+    type: "AddVertex"
+    id: number
+}
+
+export interface AddEdgeAction {
+    type: "AddEdge"
+    start_id: number
+    end_id: number
+}
+
+export interface HighlightVertexAction {
+    type: "HighlightVertex"
+    id: number
+    mode: "Awaiting" | "Visited"
+}
+
+export interface HighlightEdgeAction {
+    type: "HighlightEdge"
+    id: number
+    mode: string
+}
+
+export type Action = 
+    InitGraphAction
+    | AddNodeAction 
+    | AddEdgeAction 
+    | HighlightVertexAction 
+    | HighlightEdgeAction
+
+export interface Event {
+    action: Action,
+    comment: string
+}
 
 export function setupWS(onMessage: (e: Event) => void) {
     ws.onmessage = (event) => {

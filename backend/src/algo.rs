@@ -1,9 +1,12 @@
-use std::process::Output;
-
-pub trait InteractiveAlgo<I, C>
+pub trait InteractiveAlgo<I, E, C>
+where C: EventClient<E>
 {
     type Result;
-    fn init(input: I, client: C) -> impl Future<Output=Self>;
-    fn step(&mut self) -> impl Future<Output=()>;
+    fn init(input: I, client: &mut C) -> Self;
+    fn step(&mut self, client: &mut C);
     fn result(&self) -> Option<Self::Result>;
+}
+
+pub trait EventClient<E> {
+    fn consume(&mut self, event: E);
 }
