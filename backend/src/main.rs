@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use axum::{
     Router,
     extract::{
@@ -7,68 +5,58 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
-    routing::{any, get},
+    routing::any,
 };
 use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
 
+use std::sync::{Arc, Mutex};
+
 use tokio::net::TcpListener;
 use tokio::select;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Result;
+use serde::Serialize;
+use tuptacz::{
+    algo::InteractiveAlgo,
+    pathfinding::{Dijkstra, Num},
+    presentation::{EventClient, GraphEvent},
+};
 
 const SERVER_ADDRESS: &str = "127.0.0.1:3000";
 
-#[derive(Clone)]
-struct AppState {
-    nodes: u32,
+struct WebSocketClient {
+    sender: SplitSink<WebSocket, Message>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct AddNodeEvent {
-    eventType: String,
-    nodeId: String,
-}
-
-impl AddNodeEvent {
-    fn new(id: String) -> Self {
-        AddNodeEvent {
-            eventType: "ADD_NODE".into(),
-            nodeId: id,
-        }
+impl<V, E> EventClient<V, E> for WebSocketClient
+where
+    E: Sync + Serialize,
+    V: Sync + Serialize,
+{
+    async fn consume(&mut self, event: &GraphEvent<V, E>) {
+        let serialized = serde_json::to_string(event).unwrap();
+        self.sender.send(Message::Text(serialized.into())).await;
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct AddEdgeEvent {
-    eventType: String,
-    startNodeId: String,
-    endNodeId: String,
+struct InternalAppState {
+    algo: Dijkstra<(), Num, WebSocketClient>,
 }
 
-impl AddEdgeEvent {
-    fn new(start: String, end: String) -> Self {
-        AddEdgeEvent {
-            eventType: "ADD_EDGE".into(),
-            startNodeId: start,
-            endNodeId: end,
-        }
-    }
-}
+type AppState = Arc<Mutex<InternalAppState>>;
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, mut state: AppState) {
+async fn handle_socket<'a>(mut socket: WebSocket, mut state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     socket_loop(sender, receiver, state).await;
 }
 
-async fn socket_loop(
+async fn socket_loop<'a>(
     mut sender: SplitSink<WebSocket, Message>,
     mut receiver: SplitStream<WebSocket>,
     mut state: AppState,
@@ -78,17 +66,8 @@ async fn socket_loop(
             Some(Ok(message)) = receiver.next() => {
             match message {
                 axum::extract::ws::Message::Text(utf8_bytes) => {
-                    // TODO: Here should be some reasonable logic, lol
-                    state.nodes += 1;
-                    let event = AddNodeEvent::new(state.nodes.to_string());
-                    let s = serde_json::to_string(&event).unwrap();
-                    sender.send(Message::Text(s.into())).await;
-
-                    if state.nodes > 2 {
-                        let event = AddEdgeEvent::new((state.nodes - 1).to_string(), (state.nodes - 2).to_string());
-                        let s = serde_json::to_string(&event).unwrap();
-                        sender.send(Message::Text(s.into())).await;
-                    }
+                    let mut data = state.lock().unwrap();
+                    data.algo.step();
                 }
                 axum::extract::ws::Message::Binary(bytes) => todo!(),
                 axum::extract::ws::Message::Ping(bytes) => todo!(),
@@ -105,17 +84,36 @@ async fn socket_loop(
 
 #[tokio::main]
 async fn main() {
+    let n = 42;
+    let mut edge_id = 0;
+    let vertices: Vec<_> = (0..n)
+        .map(|i| Vertex {
+            id: i,
+            edges: vec![Edge {
+                id: {
+                    let id = edge_id;
+                    edge_id += 1;
+                    id
+                },
+                end_index: (i + 1) % n,
+                properties: 1,
+            }],
+            properties: (),
+        })
+        .collect();
+
+    let algo = Dijkstra::init(Arc::new(vertices), 0);
+
+    // utwórz stan aplikacji
+    let app_state = InternalAppState { algo };
+
+    // zarejestruj router ze stanem
     let app = Router::new()
-        .route("/", get(root))
         .route("/ws", any(ws_handler))
-        .with_state(AppState { nodes: 0 });
+        .with_state(Arc::new(Mutex::new(app_state)));
 
     let listener = TcpListener::bind(SERVER_ADDRESS).await.unwrap();
     println!("Server running on {}", SERVER_ADDRESS);
 
     axum::serve(listener, app).await.unwrap();
-}
-
-async fn root() -> &'static str {
-    "Hello, World!"
 }

@@ -1,10 +1,6 @@
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
 import './App.css'
 
 import { useEffect, useState, useRef } from 'react'
-import cytoscape from 'cytoscape'
 import CytoscapeComponent from "react-cytoscapejs"
 import { sendStepMessage, setupWS } from './core/ws'
 
