@@ -1,37 +1,39 @@
 use serde::{Deserialize, Serialize};
 
-use crate::graphs::Graph;
+use crate::graphs::{Edge, EdgeId, VertexId};
 
 #[derive(Serialize, Deserialize)]
 pub enum HighlightMode {
     Visited,
-    Awaiting
+    Awaiting,
+    Source,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ServerAction<V, E> {
     InitGraph {
-        graph: Graph<V, E>,
+        vertices: Vec<(VertexId, V)>,
+        edges: Vec<Edge<E>>,
     },
     HighlightVertex {
-        id: usize,
+        id: VertexId,
         mode: HighlightMode,
     },
     HideVertex {
-        id: usize,
+        id: VertexId,
     },
     HighlightEdge {
-        id: usize,
+        id: EdgeId,
         mode: HighlightMode,
     },
     AddVertex {
-        id: usize,
+        id: EdgeId,
     },
     AddEdge {
-        id: usize,
-        start_id: usize,
-        end_id: usize,
+        id: EdgeId,
+        start_id: VertexId,
+        end_id: VertexId,
     },
 }
 

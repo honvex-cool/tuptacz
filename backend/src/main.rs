@@ -24,7 +24,7 @@ use tokio::select;
 
 use tuptacz::{
     algo::{EventClient, InteractiveAlgo},
-    graphs::{Edge, Graph, Vertex},
+    graphs::{AdjListRepr, Edge, Graph, Vertex},
     pathfinding::{Dijkstra, Num},
     presentation::GraphEvent,
 };
@@ -61,7 +61,7 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 }
 
 struct AppState {
-    graph_blueprint: Graph<(), Num>,
+    graph_blueprint: AdjListRepr<(), Num>,
 }
 
 type SharedAppState = Arc<AppState>;
@@ -120,32 +120,23 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn make_random_smol_graph() -> Graph<(), Num> {
+fn make_random_smol_graph() -> AdjListRepr<(), Num> {
     let mut rng = rand::rng();
     let n = 10;
     let d = 2;
     let v = 8;
-    let mut vertices = Vec::with_capacity(n);
-    let mut edge_id = 0;
-    for id in 0..n {
-        let mut vertex = Vertex::new(id);
-        vertex.edges.reserve(d);
+    let mut graph = AdjListRepr::with_size(n);
+    for vertex_id in 0..n {
         let mut num_edges = 0;
         while num_edges < d {
             let end_id = rng.random_range(0..n);
-            if end_id == id {
+            if end_id == vertex_id {
                 continue;
             }
             let weight = rng.random_range(1..=v);
-            vertex.edges.push(Edge {
-                id: edge_id,
-                end_id,
-                properties: weight,
-            });
+            graph.add_edge(vertex_id, end_id, weight);
             num_edges += 1;
-            edge_id += 1;
         }
-        vertices.push(vertex);
     }
-    vertices
+    graph
 }

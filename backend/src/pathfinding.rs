@@ -1,8 +1,9 @@
-use crate::algo::{EventClient, InteractiveAlgo};
-use crate::graphs::Graph;
-use crate::presentation::{GraphEvent, HighlightMode, ServerAction};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+
+use crate::algo::{EventClient, InteractiveAlgo};
+use crate::graphs::{Graph, VertexId};
+use crate::presentation::{GraphEvent, HighlightMode, ServerAction};
 
 pub type Num = i64;
 
@@ -18,7 +19,7 @@ impl Distance for Num {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Route {
-    destination_index: usize,
+    destination_index: VertexId,
     total_distance: Num,
 }
 
@@ -36,21 +37,35 @@ impl PartialOrd for Route {
     }
 }
 
-pub struct Dijkstra<V, E>
+pub struct Dijkstra<G>
 where
-    E: Distance,
+    G: Graph,
+    G::E: Distance,
 {
-    graph: Graph<V, E>,
+    graph: G,
     distances: Vec<Num>,
     pending_routes: BinaryHeap<Route>,
 }
 
-impl<V, E> Dijkstra<V, E>
+impl<G, V, E> Dijkstra<G>
 where
-    V: Clone,
-    E: Distance + Clone,
+    E: Distance,
+    G: Graph<V = V, E = E> + Clone,
 {
-    fn highlight_visited<C>(&self, vertex_id: usize, client: &mut C)
+    fn highlight_source<C>(vertex_id: VertexId, client: &mut C)
+    where
+        C: EventClient<GraphEvent<V, E>>,
+    {
+        client.consume(GraphEvent {
+            action: ServerAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Source,
+            },
+            comment: "Starting from vertex".to_owned(),
+        });
+    }
+
+    fn highlight_visited<C>(&self, vertex_id: VertexId, client: &mut C)
     where
         C: EventClient<GraphEvent<V, E>>,
     {
@@ -63,7 +78,7 @@ where
         });
     }
 
-    fn highlight_awaiting<C>(&self, vertex_id: usize, client: &mut C)
+    fn highlight_awaiting<C>(&self, vertex_id: VertexId, client: &mut C)
     where
         C: EventClient<GraphEvent<V, E>>,
     {
@@ -77,15 +92,15 @@ where
     }
 }
 
-impl<V, E, C> InteractiveAlgo<(Graph<V, E>, usize), GraphEvent<V, E>, C> for Dijkstra<V, E>
+impl<G, V, E, C> InteractiveAlgo<(G, VertexId), GraphEvent<V, E>, C> for Dijkstra<G>
 where
-    V: Clone,
-    E: Distance + Clone,
+    G: Graph<V = V, E = E> + Clone,
+    E: Distance,
     C: EventClient<GraphEvent<V, E>>,
 {
     type Result = Vec<Num>;
 
-    fn init((graph, source_index): (Graph<V, E>, usize), client: &mut C) -> Self {
+    fn init((graph, source_index): (G, VertexId), client: &mut C) -> Self {
         let source_route = Route {
             destination_index: source_index,
             total_distance: 0,
@@ -93,15 +108,15 @@ where
         let mut pending_routes = BinaryHeap::new();
         pending_routes.push(source_route);
 
-        let mut distances = vec![Num::MAX; graph.len()];
+        let mut distances = vec![Num::MAX; graph.get_num_vertices()];
         distances[source_index] = 0;
 
         client.consume(GraphEvent {
-            action: ServerAction::InitGraph {
-                graph: graph.clone(),
-            },
+            action: todo!("InitGraph"),
             comment: "Graph created".to_owned(),
         });
+
+        Self::highlight_source(source_index, client);
 
         Self {
             graph,
@@ -121,11 +136,11 @@ where
 
         self.highlight_visited(route.destination_index, client);
 
-        for edge in &self.graph[route.destination_index].edges {
+        for edge in self.graph.get_edges(route.destination_index) {
             let neighbor_index = edge.end_id;
             let neighbor_distance = &mut self.distances[neighbor_index];
 
-            let new_total_distance = route.total_distance + edge.properties.distance();
+            let new_total_distance = route.total_distance + edge.props.distance();
 
             if new_total_distance < *neighbor_distance {
                 *neighbor_distance = new_total_distance;

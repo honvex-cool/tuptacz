@@ -33,7 +33,7 @@ export interface AddEdgeAction {
 export interface HighlightVertexAction {
     type: "HighlightVertex"
     id: number
-    mode: "Awaiting" | "Visited"
+    mode: "Awaiting" | "Visited" | "Source"
 }
 
 export interface HighlightEdgeAction {

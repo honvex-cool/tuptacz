@@ -1,5 +1,6 @@
 pub trait InteractiveAlgo<I, E, C>
-where C: EventClient<E>
+where
+    C: EventClient<E>,
 {
     type Result;
     fn init(input: I, client: &mut C) -> Self;
