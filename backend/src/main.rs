@@ -15,8 +15,6 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
 };
 
-use rand::RngExt;
-
 use serde::Serialize;
 
 use tokio::net::TcpListener;
@@ -24,9 +22,11 @@ use tokio::select;
 
 use tuptacz::{
     algo::{EventClient, InteractiveAlgo},
-    graphs::{AdjListRepr, Edge, Graph, Vertex},
-    pathfinding::{Dijkstra, Num},
+    graphs::{Edge, Graph, repr::AdjList},
+    pathfinding::{Num, dijkstra::Dijkstra},
+    presentation,
     presentation::GraphEvent,
+    roads::{Intersection, Road, load},
 };
 
 const SERVER_ADDRESS: &str = "127.0.0.1:3000";
@@ -61,7 +61,7 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 }
 
 struct AppState {
-    graph_blueprint: AdjListRepr<(), Num>,
+    graph: AdjList<Intersection, Road>,
 }
 
 type SharedAppState = Arc<AppState>;
@@ -75,20 +75,50 @@ async fn handle_socket(socket: WebSocket, state: SharedAppState) {
     socket_loop(sender, receiver, state).await;
 }
 
+fn init_graph_event<V, E>(graph: &AdjList<V, E>) -> GraphEvent<V, E>
+where
+    V: Clone,
+    E: Clone,
+{
+    let vertices = graph.iter_vertices().map(|v| v.clone()).collect();
+    let edges = graph
+        .iter_edges()
+        .map(|(source, target, properties)| presentation::Edge {
+            source,
+            target,
+            properties: properties.clone(),
+        })
+        .collect();
+
+    return GraphEvent {
+        action: presentation::ServerAction::InitGraph {
+            vertices: vertices,
+            edges: edges,
+        },
+        comment: "Initialized graph".to_owned(),
+    };
+}
+
 async fn socket_loop(
     mut sender: SplitSink<WebSocket, Message>,
     mut receiver: SplitStream<WebSocket>,
     state: SharedAppState,
 ) {
-    let mut client = SimpleEventClient::new();
-    let mut dijkstra = Dijkstra::init((state.graph_blueprint.clone(), 0), &mut client);
+    let mut client = SimpleEventClient::<Intersection, Road>::new();
+    // let mut dijkstra = Dijkstra::init((state.graph.clone(), 0), &mut client);
     client.flush(&mut sender).await;
+
+    let event = init_graph_event(&state.graph);
+    let serialized = serde_json::to_string(&event).unwrap();
+    let message = Message::Text(serialized.into());
+    sender.send(message).await.unwrap();
+
     loop {
         select! {
             Some(Ok(message)) = receiver.next() => {
                 match message {
                     Message::Text(_utf8_bytes) => {
-                        dijkstra.step(&mut client);
+                        // dijkstra.step(&mut client);
                         client.flush(&mut sender).await;
                     }
                     Message::Close(_) => break,
@@ -104,11 +134,9 @@ async fn socket_loop(
 
 #[tokio::main]
 async fn main() {
-    let vertices = make_random_smol_graph();
+    let graph = load("../maps/krakow.osm.pbf").unwrap();
 
-    let app_state = AppState {
-        graph_blueprint: vertices,
-    };
+    let app_state = AppState { graph: graph };
 
     let app = Router::new()
         .route("/ws", routing::any(ws_handler))
@@ -118,25 +146,4 @@ async fn main() {
     println!("Server running on {}", SERVER_ADDRESS);
 
     axum::serve(listener, app).await.unwrap();
-}
-
-fn make_random_smol_graph() -> AdjListRepr<(), Num> {
-    let mut rng = rand::rng();
-    let n = 10;
-    let d = 2;
-    let v = 8;
-    let mut graph = AdjListRepr::with_size(n);
-    for vertex_id in 0..n {
-        let mut num_edges = 0;
-        while num_edges < d {
-            let end_id = rng.random_range(0..n);
-            if end_id == vertex_id {
-                continue;
-            }
-            let weight = rng.random_range(1..=v);
-            graph.add_edge(vertex_id, end_id, weight);
-            num_edges += 1;
-        }
-    }
-    graph
 }

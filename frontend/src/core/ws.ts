@@ -1,53 +1,36 @@
 export const ws = new WebSocket("ws://localhost:3000/ws");
 
+export interface Coords {
+    latitude: number
+    longitude: number
+}
+
 export interface Edge {
-    id: number
-    end_id: number
-    properties: any
+    source: number,
+    target: number,
+    properties: Coords[]
 }
 
 export interface Vertex {
-    id: number
-    properties: any
-    edges: Edge[]
+    latitude: number
+    longitude: number
 }
-
-export type Graph = Vertex[];
 
 export interface InitGraphAction {
     type: "InitGraph"
-    graph: Graph
+    vertices: Vertex[],
+    edges: Edge[]
 }
 
-export interface AddNodeAction {
-    type: "AddVertex"
-    id: number
+export interface AddShortcutAction {
+    type: "AddShortcut"
+    source: number
+    target: number
 }
 
-export interface AddEdgeAction {
-    type: "AddEdge"
-    start_id: number
-    end_id: number
-}
-
-export interface HighlightVertexAction {
-    type: "HighlightVertex"
-    id: number
-    mode: "Awaiting" | "Visited" | "Source"
-}
-
-export interface HighlightEdgeAction {
-    type: "HighlightEdge"
-    id: number
-    mode: string
-}
-
-export type Action = 
+export type Action =
     InitGraphAction
-    | AddNodeAction 
-    | AddEdgeAction 
-    | HighlightVertexAction 
-    | HighlightEdgeAction
+    | AddShortcutAction
 
 export interface Event {
     action: Action,

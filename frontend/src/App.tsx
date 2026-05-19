@@ -2,71 +2,113 @@ import './App.css'
 
 import { DeckOverlay } from '@deck.gl-community/leaflet';
 import { MapView } from '@deck.gl/core';
-import { GeoJsonLayer, ArcLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, ArcLayer, ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { useMap, MapContainer, TileLayer } from 'react-leaflet'
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import 'leaflet/dist/leaflet.css';
+import { setupWS } from './core/ws';
 
-function Graph() {
-  // source: Natural Earth http://www.naturalearthdata.com/ via geojson.xyz
-  const AIR_PORTS =
-    'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_10m_airports.geojson';
-
-  // Create map
+function GraphComponent({ nodes, edges, shortcuts }) {
   const map = useMap();
+
   useEffect(() => {
-    // Add deck.gl overlay
-    const deckOverlay = new DeckOverlay({
-      views: [
-        new MapView({ repeat: true }),
-      ],
-      layers: [
-        new GeoJsonLayer({
-          id: 'airports',
-          data: AIR_PORTS,
-          // Styles
-          filled: true,
-          pointRadiusMinPixels: 2,
-          pointRadiusScale: 2000,
-          getPointRadius: (f) => 11 - f.properties.scalerank,
-          getFillColor: [200, 0, 80, 180],
-          // Interactive props
-          pickable: true,
-          autoHighlight: true,
-          onClick: (info) =>
-            // eslint-disable-next-line
-            info.object && alert(`${info.object.properties.name} (${info.object.properties.abbrev})`)
-        }),
-        new ArcLayer({
-          id: 'arcs',
-          data: AIR_PORTS,
-          dataTransform: (d: any) => d.features.filter((f: any) => f.properties.scalerank < 4),
-          // Styles
-          getSourcePosition: () => [-0.4531566, 51.4709959], // London
-          getTargetPosition: (f) => f.geometry.coordinates,
-          getSourceColor: [0, 128, 200],
-          getTargetColor: [200, 0, 80],
-          getWidth: 1
-        })
-      ],
-      getTooltip: (info) => info.object && info.object.properties.name
+    const overlay = new DeckOverlay({
+      views: null,
+      layers: []
     });
-    map.addLayer(deckOverlay);
-  });
+    map.addLayer(overlay);
+
+
+    function update() {
+      overlay.setProps({
+        layers: [
+          new ScatterplotLayer({
+            id: "nodes",
+            data: nodes,
+            getPosition: d => [d.lng, d.lat],
+            getRadius: 2,
+            getFillColor: d =>
+              d.contracted ? [255, 80, 80] : [0, 120, 255]
+          }),
+
+          new PathLayer({
+            id: "edges",
+            data: edges,
+            getPath: d => d.properties.map(p => {
+              return [p.longitude, p.latitude]
+            }
+            ),
+            getColor: [100, 100, 100],
+            getWidth: 1
+          }),
+
+          new ArcLayer({
+            id: "shortcuts",
+            data: shortcuts,
+            getSourcePosition: d => {
+              const s = nodes[d.source];
+              return [s.lng, s.lat];
+            },
+            getTargetPosition: d => {
+              const t = nodes[d.target];
+              return [t.lng, t.lat];
+            },
+            getWidth: 2,
+            getSourceColor: [255, 140, 0],
+            getTargetColor: [255, 0, 200]
+          })
+        ]
+      });
+    }
+
+    update();
+
+    return () => {
+      map.removeLayer(overlay);
+    };
+  }, [map, nodes, edges, shortcuts]);
 
   return null;
 }
 
 function App() {
+  const initialNodes = [
+    { lat: 50.030283078531774, lng: 19.907621146592238 },
+    { lat: 50.02778810326561, lng: 19.904820920606536 },
+    { lat: 50.02629976583603, lng: 19.90315396250886 }
+  ]
+
+  const initialEdges = [{ source: 0, target: 1 }, { source: 1, target: 2 }]
+  const initialShortcuts = [{ source: 0, target: 2 }]
+
+  const [nodes, setNodes] = useState(initialNodes);
+  const [edges, setEdges] = useState(initialEdges);
+  const [shortcuts, setShortcuts] = useState(initialShortcuts);
+
+  setupWS((e) => {
+    if (e.action.type === "InitGraph") {
+      console.log(e.action.edges[0])
+      setNodes(e.action.vertices.map(v => {return { lat: v.latitude, lng: v.longitude }}))
+      setEdges(e.action.edges)
+    } else if (e.action.type === "AddShortcut") {
+      const source = e.action.source
+      const target = e.action.target
+
+      setShortcuts(s =>
+        [...s, { source: source, target: target }]
+      )
+    }
+  })
+
   return <MapContainer
-    center={[51.505, -0.09]} zoom={13}
+    center={[50.030641402999564, 19.906958054507893]} zoom={13}
     style={{ height: "100vh" }}>
     <TileLayer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     />
-    <Graph />
+    <GraphComponent nodes={nodes} edges={edges} shortcuts={shortcuts} />
   </MapContainer>
 
 }
