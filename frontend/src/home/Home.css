@@ -1,0 +1,27 @@
+#home {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 50px;
+}
+
+#main-img {
+    width: 400px;
+}
+
+.title {
+    color: #eee;
+    font-size: 72px;
+    margin: 0;
+}
+
+
+.poem {
+    font-size: 2em;
+}
+
+#home-btns {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+}

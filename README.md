@@ -1,4 +1,10 @@
+![Tuptacz](frontend/public/tuptacz-light.png)
 # Tuptacz
+
+These repository contains (still WIP) our two projects for the Computationl Problems in public transportation course - they both share the frontend and the backend.
+
+- `TuptaCH` - a visualization of Contraction Hierarchies algorithm
+- `JakDotuptam` - a connection finder for public transport in Kraków
 
 ## Run instructions
 
@@ -37,3 +43,10 @@ The two components communicate over a REST API and over websockets.
     Alternatively, you can edit the source to pick a different port.with `npm install`
 3. Build the project with `npm run build`. run preview
 4. Run `npm run preview` to start the app
+
+
+## Authors
+
+- Jakub Oskwarek @honvex-cool
+
+- Michał Horodecki @mhorod
