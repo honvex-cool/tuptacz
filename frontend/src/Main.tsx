@@ -9,6 +9,7 @@ type MainProps = {
 };
 
 
+
 function link(to: string, text: string) {
     const path = window.location.pathname;
     const className = path === to ? "active" : "";

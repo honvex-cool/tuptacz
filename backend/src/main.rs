@@ -29,7 +29,7 @@ use tuptacz::{
     roads::{Intersection, Road, load},
 };
 
-const SERVER_ADDRESS: &str = "127.0.0.1:3000";
+const SERVER_ADDRESS: &str = "0.0.0.0:3000";
 
 struct SimpleEventClient<V, E> {
     events: Vec<GraphEvent<V, E>>,
@@ -134,7 +134,7 @@ async fn socket_loop(
 
 #[tokio::main]
 async fn main() {
-    let graph = load("../maps/krakow.osm.pbf").unwrap();
+    let graph = load("maps/krakow.osm.pbf").unwrap();
 
     let app_state = AppState { graph: graph };
 
