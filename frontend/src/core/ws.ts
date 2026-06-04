@@ -1,4 +1,8 @@
-export const ws = new WebSocket("ws://localhost:3000/ws");
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+const ws = new WebSocket(
+  `${protocol}//${window.location.host}/ws`
+);
 
 export interface Coords {
     latitude: number

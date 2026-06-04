@@ -20,7 +20,7 @@ function link(to: string, text: string) {
     );
 }
 
-function TopNav(props: { title: string }) {
+function TopNav() {
     return <div className="top-nav">
         <div className="top-nav-left">
             <div className="nav-title">
@@ -39,7 +39,7 @@ export default function Main(props: MainProps) {
     return (
         <div className="main">
             <title>{props.title}</title>
-            <TopNav title={props.title} />
+            <TopNav />
             {props.children}
         </div>
     );

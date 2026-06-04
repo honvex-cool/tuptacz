@@ -1,6 +1,6 @@
 import "./JakDotuptam.css"
 
-import { useMap, MapContainer, TileLayer } from 'react-leaflet'
+import { MapContainer, TileLayer } from 'react-leaflet'
 
 export default function JakDotuptam() {
     return <div id="jakdotuptam-container">

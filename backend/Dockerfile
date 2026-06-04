@@ -1,4 +1,5 @@
 FROM rust:trixie
 WORKDIR /app
-COPY ./backend  ./
+COPY ./ ./
+EXPOSE 3000
 CMD ["cargo", "run"]

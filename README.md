@@ -14,6 +14,16 @@ The app has two major components:
 
 The two components communicate over a REST API and over websockets.
 
+The simplest way is to run the project with docker by running
+```bash
+./run-prod.sh
+```
+
+It exposes the whole app on `localhost:8080`.
+
+
+Alternatively you can follow the below instructions to run the frontend and the backend manually without Docker.
+
 ### Backend
 
 0. Install Rust: [Instructions](https://rust-lang.org/tools/install/).
@@ -36,7 +46,7 @@ The two components communicate over a REST API and over websockets.
     cd frontend
     npm i
     ```
-2. Make sure that port `44173` on `localhost` is free.
+2. Make sure that port `5173` on `localhost` is free.
 
     By default, the fronend will be served on that port.
 

@@ -1,15 +1,20 @@
 import './App.css'
 
 import { DeckOverlay } from '@deck.gl-community/leaflet';
-import { MapView } from '@deck.gl/core';
-import { GeoJsonLayer, ArcLayer, ScatterplotLayer, PathLayer } from '@deck.gl/layers';
+import { ArcLayer, ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { useMap, MapContainer, TileLayer } from 'react-leaflet'
 import { useEffect, useState } from 'react';
 
 import 'leaflet/dist/leaflet.css';
 import { setupWS } from './core/ws';
 
-function GraphComponent({ nodes, edges, shortcuts }) {
+type GraphProps = {
+  nodes: any,
+  edges: any,
+  shortcuts: any
+}
+
+function GraphComponent({ nodes, edges, shortcuts }: GraphProps) {
   const map = useMap();
 
   useEffect(() => {
@@ -35,7 +40,7 @@ function GraphComponent({ nodes, edges, shortcuts }) {
           new PathLayer({
             id: "edges",
             data: edges,
-            getPath: d => d.properties.map(p => {
+            getPath: d => d.properties.map((p: any)  => {
               return [p.longitude, p.latitude]
             }
             ),

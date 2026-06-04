@@ -1,18 +1,27 @@
 services:
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile.dev
+      context: frontend
+      dockerfile: ./Dockerfile.dev
     ports:
       - "5173:5173"
     volumes:
       - "./frontend/src:/app/src"
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile.dev
+      context: backend
+      dockerfile: ./Dockerfile
     ports:
       - "3000:3000"
     environment:
       - RUST_BACKTRACE=1
+  nginx:
+    build:
+      context: nginx
+      dockerfile: ./Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - frontend
+      - backend
     

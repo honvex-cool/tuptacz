@@ -66,6 +66,10 @@ struct AppState {
 
 type SharedAppState = Arc<AppState>;
 
+async fn health_check_handler() -> &'static str {
+    "Backend up."
+}
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SharedAppState>) -> Response {
     ws.on_upgrade(async move |socket| handle_socket(socket, state).await)
 }
@@ -140,6 +144,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", routing::any(ws_handler))
+        .route("/api/health-check", routing::get(health_check_handler))
         .with_state(Arc::new(app_state));
 
     let listener = TcpListener::bind(SERVER_ADDRESS).await.unwrap();
