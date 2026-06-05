@@ -103,3 +103,9 @@
 .text-primary {
   color: #eee;
 }
+
+input[type=text] {
+  border-radius: 50px;
+  border: 1px solid #eee;
+  padding: 10px;
+}

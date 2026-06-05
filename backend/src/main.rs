@@ -1,13 +1,14 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
-    routing,
+    routing::{any, get},
 };
 
 use futures_util::{
@@ -23,9 +24,9 @@ use tokio::select;
 use tuptacz::{
     algo::{EventClient, InteractiveAlgo},
     graphs::{Edge, Graph, repr::AdjList},
+    gtfs::{Gtfs, Route, Shape, Stop, load_gtfs},
     pathfinding::{Num, dijkstra::Dijkstra},
-    presentation,
-    presentation::GraphEvent,
+    presentation::{self, GraphEvent},
     roads::{Intersection, Road, load},
 };
 
@@ -62,6 +63,7 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 
 struct AppState {
     graph: AdjList<Intersection, Road>,
+    gtfs: Gtfs,
 }
 
 type SharedAppState = Arc<AppState>;
@@ -136,15 +138,41 @@ async fn socket_loop(
     }
 }
 
+async fn get_stops(State(state): State<Arc<AppState>>) -> Json<Vec<Stop>> {
+    Json((&state.gtfs).stops.values().cloned().collect::<Vec<Stop>>())
+}
+
+async fn get_shapes(State(state): State<Arc<AppState>>) -> Json<Vec<Shape>> {
+    Json(
+        (&state.gtfs)
+            .shapes
+            .values()
+            .cloned()
+            .collect::<Vec<Shape>>(),
+    )
+}
+
+fn gtfs_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/stops", get(get_stops))
+        .route("/shapes", get(get_shapes))
+}
+
 #[tokio::main]
 async fn main() {
     let graph = load("maps/krakow.osm.pbf").unwrap();
 
-    let app_state = AppState { graph: graph };
+    let gtfs = load_gtfs(Path::new("gtfs/KRK/T"));
+
+    let app_state = AppState {
+        graph: graph,
+        gtfs: gtfs,
+    };
 
     let app = Router::new()
-        .route("/ws", routing::any(ws_handler))
-        .route("/api/health-check", routing::get(health_check_handler))
+        .route("/ws", any(ws_handler))
+        .route("/api/health-check", get(health_check_handler))
+        .nest("/api/gtfs", gtfs_router())
         .with_state(Arc::new(app_state));
 
     let listener = TcpListener::bind(SERVER_ADDRESS).await.unwrap();

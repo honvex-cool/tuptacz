@@ -10,9 +10,11 @@ services:
   backend:
     build:
       context: backend
-      dockerfile: ./Dockerfile
+      dockerfile: ./Dockerfile.dev
     ports:
       - "3000:3000"
+    volumes:
+      - "./backend:/app"
     environment:
       - RUST_BACKTRACE=1
   nginx:
