@@ -8,7 +8,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
-    routing::{any, get},
+    routing::{any, get, post},
 };
 
 use futures_util::{
@@ -16,7 +16,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use tokio::net::TcpListener;
 use tokio::select;
@@ -24,10 +24,13 @@ use tokio::select;
 use tuptacz::{
     algo::{EventClient, InteractiveAlgo},
     graphs::{Edge, Graph, repr::AdjList},
-    gtfs::{Gtfs, Route, Shape, Stop, load_gtfs},
     pathfinding::{Num, dijkstra::Dijkstra},
     presentation::{self, GraphEvent},
     roads::{Intersection, Road, load},
+    transit::{
+        gtfs::load_gtfs,
+        model::{MetaStop, Shape, Stop, TransitInfo},
+    },
 };
 
 const SERVER_ADDRESS: &str = "0.0.0.0:3000";
@@ -63,7 +66,7 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 
 struct AppState {
     graph: AdjList<Intersection, Road>,
-    gtfs: Gtfs,
+    transit_info: TransitInfo,
 }
 
 type SharedAppState = Arc<AppState>;
@@ -138,41 +141,62 @@ async fn socket_loop(
     }
 }
 
-async fn get_stops(State(state): State<Arc<AppState>>) -> Json<Vec<Stop>> {
-    Json((&state.gtfs).stops.values().cloned().collect::<Vec<Stop>>())
+async fn get_stops(State(state): State<Arc<AppState>>) -> Json<Vec<MetaStop>> {
+    Json((&state.transit_info).meta_stops.iter().cloned().collect())
 }
 
 async fn get_shapes(State(state): State<Arc<AppState>>) -> Json<Vec<Shape>> {
     Json(
-        (&state.gtfs)
+        (&state.transit_info)
             .shapes
-            .values()
+            .iter()
             .cloned()
             .collect::<Vec<Shape>>(),
     )
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct SearchRequest {
+    start: usize,
+    end: usize,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SearchRequest>,
+) -> Json<()> {
+    println!("{:?}", payload);
+    Json(())
 }
 
 fn gtfs_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/stops", get(get_stops))
         .route("/shapes", get(get_shapes))
+        .route("/search", post(search))
 }
 
 #[tokio::main]
 async fn main() {
     let graph = load("maps/krakow.osm.pbf").unwrap();
 
-    let gtfs = load_gtfs(Path::new("gtfs/KRK/T"));
+    let gtfs_t = load_gtfs(Path::new("gtfs/KRK/T"));
+    let gtfs_a = load_gtfs(Path::new("gtfs/KRK/A"));
+    let gtfs_m = load_gtfs(Path::new("gtfs/KRK/M"));
+
+    let mut transit_info = TransitInfo::new();
+    transit_info.add_gtfs(&gtfs_t);
+    transit_info.add_gtfs(&gtfs_a);
+    transit_info.add_gtfs(&gtfs_m);
 
     let app_state = AppState {
         graph: graph,
-        gtfs: gtfs,
+        transit_info: transit_info,
     };
 
     let app = Router::new()
         .route("/ws", any(ws_handler))
         .route("/api/health-check", get(health_check_handler))
-        .nest("/api/gtfs", gtfs_router())
+        .nest("/api/transit", gtfs_router())
         .with_state(Arc::new(app_state));
 
     let listener = TcpListener::bind(SERVER_ADDRESS).await.unwrap();

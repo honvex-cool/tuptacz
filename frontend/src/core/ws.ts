@@ -1,7 +1,7 @@
 const websocketProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
 const ws = new WebSocket(
-  `${websocketProtocol}//${window.location.host}/ws`
+    `${websocketProtocol}//${window.location.host}/ws`
 );
 
 export interface Coords {
@@ -56,4 +56,16 @@ export function sendStepMessage() {
 
 export function apiGet(path: string) {
     return fetch(`${window.location.protocol}//${window.location.host}/api${path}`)
+}
+
+export function apiPost(path: string, payload: any) {
+    return fetch(
+        `${window.location.protocol}//${window.location.host}/api${path}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: {
+            "Content-type": "application/json; charset=UTF-8"
+        }
+    }
+    )
 }
