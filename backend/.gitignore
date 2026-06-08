@@ -1,3 +1,4 @@
 target/
 maps/*.osm.pbf
 gtfs/KRK
+gtfs/*.zip

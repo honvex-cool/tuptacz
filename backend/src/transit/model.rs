@@ -8,12 +8,12 @@ use crate::{
     },
 };
 use chrono::{Datelike, Weekday};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::{collections::HashMap, collections::HashSet};
 
 macro_rules! id_type {
     ($name:ident, $type:ty) => {
-        #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize)]
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub struct $name(pub $type);
     };
 }
@@ -136,13 +136,16 @@ impl MetaStop {
     }
 }
 
+#[derive(Debug)]
 pub struct ServiceWeekdaySchedule {
     pub weekday: Weekday,
     pub start_date: ServiceDate,
     pub end_date: ServiceDate,
 }
 
+#[derive(Debug)]
 pub struct ServiceCalendar {
+    pub service_name: String,
     pub active_weekdays: Vec<ServiceWeekdaySchedule>,
     pub active_dates: HashSet<ServiceDate>,
     pub inactive_dates: HashSet<ServiceDate>,
@@ -279,6 +282,7 @@ impl TransitInfo {
                 let id = ServiceId(self.services.len());
                 service_id_map.insert(calendar_entry.service_id.clone(), id);
                 self.services.push(ServiceCalendar {
+                    service_name: calendar_entry.service_id.clone(),
                     active_weekdays: Vec::new(),
                     active_dates: HashSet::new(),
                     inactive_dates: HashSet::new(),
@@ -312,6 +316,7 @@ impl TransitInfo {
                 let id = ServiceId(self.services.len());
                 service_id_map.insert(calendar_date_entry.service_id.clone(), id);
                 self.services.push(ServiceCalendar {
+                    service_name: calendar_date_entry.service_id.clone(),
                     active_weekdays: Vec::new(),
                     active_dates: HashSet::new(),
                     inactive_dates: HashSet::new(),
@@ -327,7 +332,7 @@ impl TransitInfo {
                 }
                 ServiceRemoved => {
                     self.services[id]
-                        .active_dates
+                        .inactive_dates
                         .insert(calendar_date_entry.date);
                 }
             }

@@ -1,6 +1,7 @@
 use std::f32::consts::E;
 
 use chrono::{DateTime, FixedOffset, NaiveTime, Timelike};
+use serde::Serialize;
 
 use crate::transit;
 use crate::transit::gtfs::{ServiceDate, ServiceTime};
@@ -75,11 +76,12 @@ impl<'a> TripPatternView<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 struct Step {
     trip_id: TripId,
     start_stop_idx: usize,
     end_stop_idx: usize,
+    walked_distance: f32,
 }
 
 struct Search {
@@ -148,6 +150,7 @@ fn round(transit_view: &TransitView, search: &mut Search) {
                             trip_id: trip.trip_id,
                             start_stop_idx: trip.start_stop_idx,
                             end_stop_idx: stop_idx,
+                            walked_distance: 0.0,
                         });
                     }
                 } else {
@@ -156,6 +159,7 @@ fn round(transit_view: &TransitView, search: &mut Search) {
                         trip_id: trip.trip_id,
                         start_stop_idx: trip.start_stop_idx,
                         end_stop_idx: stop_idx,
+                        walked_distance: 0.0,
                     });
                 }
             }
@@ -168,16 +172,26 @@ fn round(transit_view: &TransitView, search: &mut Search) {
         if let Some(arrival_time) = earliest_arrival[stop_id] {
             for path in foot_paths {
                 let duration =
-                    (path.distance_meters / WALKING_SPEED_METERS_PER_SECOND).round() as u32;
+                    (path.distance_meters / WALKING_SPEED_METERS_PER_SECOND).round() as i32;
+                if duration < 0 {
+                    println!("very sus")
+                }
+                let duration = duration as u32;
                 if let Some(end_arrival_time) = earliest_arrival[path.to.0] {
                     if arrival_time.0 + duration < end_arrival_time.0 {
                         earliest_arrival_walk[path.to.0] =
                             Some(ServiceTime(arrival_time.0 + duration));
-                        parent[path.to.0] = parent[stop_id];
+                        parent[path.to.0] = parent[stop_id].map(|mut p| {
+                            p.walked_distance = path.distance_meters;
+                            p
+                        });
                     }
                 } else {
                     earliest_arrival_walk[path.to.0] = Some(ServiceTime(arrival_time.0 + duration));
-                    parent[path.to.0] = parent[stop_id];
+                    parent[path.to.0] = parent[stop_id].map(|mut p| {
+                        p.walked_distance = path.distance_meters;
+                        p
+                    });
                 }
             }
         }
@@ -187,14 +201,27 @@ fn round(transit_view: &TransitView, search: &mut Search) {
     search.parent.push(parent);
 }
 
-fn reconstruct_journey(transit_info: &TransitInfo, search: &Search, end_stop: StopId) {
+#[derive(Debug, Serialize)]
+pub struct Journey {
+    arrival_time: ServiceTime,
+    steps: Vec<Step>,
+}
+
+fn reconstruct_journey(
+    transit_info: &TransitInfo,
+    search: &Search,
+    end_stop: StopId,
+    rounds: usize,
+) -> Option<Journey> {
     let mut steps = Vec::new();
 
     let mut stop = end_stop;
 
-    for round in (0..=ROUNDS as usize).rev() {
+    let arrival_time = search.earliest_arrival[stop.0]?;
+
+    for round in (0..=rounds).rev() {
         if let Some(step) = &search.parent[round][stop.0] {
-            steps.push(step);
+            steps.push(*step);
             let trip = &transit_info.trips[step.trip_id.0];
             stop = trip.stop_times[step.start_stop_idx].stop_id;
         }
@@ -202,7 +229,7 @@ fn reconstruct_journey(transit_info: &TransitInfo, search: &Search, end_stop: St
     steps.reverse();
 
     println!("Steps: ");
-    for step in steps {
+    for step in &steps {
         let trip = &transit_info.trips[step.trip_id.0];
         let route = &transit_info.routes[trip.route_id.0];
 
@@ -212,28 +239,35 @@ fn reconstruct_journey(transit_info: &TransitInfo, search: &Search, end_stop: St
         let start_stop = &transit_info.stops[start_stop_time.stop_id.0];
         let end_stop = &transit_info.stops[end_stop_time.stop_id.0];
         println!(
-            "{:?} : {:?} ({:?}) [{:?}] -> {:?} ({:?}) [{:?}]",
+            "{:?} : {:?} ({:?}) [{:?}] -> {:?} ({:?}) [{:?}] + walk {:?}m",
             route.short_name,
             start_stop.name,
             start_stop.code,
             NaiveTime::from_num_seconds_from_midnight_opt(start_stop_time.departure_time.0, 0),
             end_stop.name,
             end_stop.code,
-            NaiveTime::from_num_seconds_from_midnight_opt(end_stop_time.arrival_time.0, 0)
+            NaiveTime::from_num_seconds_from_midnight_opt(end_stop_time.arrival_time.0, 0),
+            step.walked_distance
         );
     }
+
+    Some(Journey {
+        steps: steps,
+        arrival_time: arrival_time,
+    })
 }
 
-pub fn search_path(
+pub fn search_journeys(
     transit_info: &TransitInfo,
     start: MetaStopId,
     end: MetaStopId,
     departure_time: DateTime<FixedOffset>,
-) {
-    let time = ServiceTime(departure_time.time().num_seconds_from_midnight());
-    let date = ServiceDate(departure_time.date_naive());
+) -> Vec<Journey> {
+    let local = departure_time.naive_local();
+    let time = ServiceTime(local.time().num_seconds_from_midnight());
+    let date = ServiceDate(local.date());
 
-    println!("Starting search {:?} {:?}", time, date);
+    println!("Starting search {:?} {:?}", local.time(), local.date());
 
     let mut earliest_arrival: Vec<Option<ServiceTime>> =
         transit_info.stops.iter().map(|_| Option::None).collect();
@@ -251,16 +285,23 @@ pub fn search_path(
         parent: parent,
     };
 
-    for _ in 0..ROUNDS {
+    let mut journeys = Vec::new();
+    for i in 0..ROUNDS as usize {
         round(&transit_view, &mut search);
+
+        println!("RESULT AFTER ROUND {:?}", i);
+
+        for end_stop in &transit_info.meta_stops[end.0].stops {
+            let ea = search.earliest_arrival[end_stop.0];
+            println!(
+                "{:?}",
+                ea.map(|s| chrono::NaiveTime::from_num_seconds_from_midnight_opt(s.0, 0))
+            );
+            if let Some(journey ) = reconstruct_journey(&transit_info, &search, *end_stop, i + 1) {
+                journeys.push(journey);
+            }
+        }
     }
 
-    for end_stop in &transit_info.meta_stops[end.0].stops {
-        let ea = search.earliest_arrival[end_stop.0];
-        println!(
-            "{:?}",
-            ea.map(|s| chrono::NaiveTime::from_num_seconds_from_midnight_opt(s.0, 0))
-        );
-        reconstruct_journey(&transit_info, &search, *end_stop);
-    }
+    journeys
 }
