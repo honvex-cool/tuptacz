@@ -14,11 +14,21 @@ function getShapes() {
     return apiGet("/transit/shapes").then(res => res.json())
 }
 
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import type { Dayjs } from "dayjs"
+
+type ValuePiece = Date | null;
+
+type Value = ValuePiece | [ValuePiece, ValuePiece];
+
 export default function JakDotuptam() {
     const [shapes, setShapes] = useState<Shape[]>([]);
     const [stops, setStops] = useState<Stop[]>([]);
     const [start, setStart] = useState<Stop>();
     const [end, setEnd] = useState<Stop>();
+    const [date, setDate] = useState<Dayjs | null>(null)
 
     useEffect(() => {
         getShapes().then(setShapes)
@@ -30,12 +40,13 @@ export default function JakDotuptam() {
     }, []);
 
     function search() {
+        console.log(start, end, date)
         apiPost("/transit/search", {
             start: start.id,
-            end: end.id
+            end: end.id,
+            departure_time: date
         },
-    
-    )
+        )
     }
 
     return <div id="jakdotuptam-container">
@@ -62,6 +73,15 @@ export default function JakDotuptam() {
                     setEnd(newValue.value)
                 }}
             />
+
+            <LocalizationProvider dateAdapter={AdapterDayjs}>
+                <DateTimePicker
+                    value={date}
+                    onChange={(newValue) => setDate(newValue)}
+                    ampm={false}
+                />
+            </LocalizationProvider>
+
             <button className="btn-primary" onClick={() => search()}>Szukaj</button>
         </div>
         <MapContainer

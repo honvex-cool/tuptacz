@@ -13,3 +13,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 osm4routing = "0.8.0"
 geo-types = "0.7.19"
 csv = "1.4.0"
+chrono = { version = "0.4.45", features = ["serde"] }

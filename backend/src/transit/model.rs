@@ -1,7 +1,15 @@
+use crate::{
+    geo,
+    transit::gtfs::{
+        Gtfs,
+        GtfsDateExceptionType::{ServiceAdded, ServiceRemoved},
+        GtfsServiceAvailability::{Available, Unavailable},
+        GtfsShapeEntry, GtfsStopTime, ServiceDate, ServiceTime,
+    },
+};
+use chrono::{Datelike, Weekday};
 use serde::Serialize;
-use std::{collections::HashMap, hash::Hash, num::NonZeroU128};
-
-use crate::transit::gtfs::{Gtfs, GtfsShapeEntry};
+use std::{collections::HashMap, collections::HashSet};
 
 macro_rules! id_type {
     ($name:ident, $type:ty) => {
@@ -10,16 +18,48 @@ macro_rules! id_type {
     };
 }
 
+macro_rules! push_if_available {
+    ($field:expr, $weekday:ident, $dest:expr) => {
+        if let Available = $field {
+            $dest.push(Weekday::$weekday);
+        }
+    };
+}
+
 id_type!(StopId, usize);
 id_type!(MetaStopId, usize);
 id_type!(ShapeId, usize);
+id_type!(TripPatternId, usize);
 id_type!(TripId, usize);
 id_type!(RouteId, usize);
+id_type!(ServiceId, usize);
 
 #[derive(Debug, Serialize, Clone, Copy)]
 pub struct LatLng {
     pub latitude: f32,
     pub longitude: f32,
+}
+
+impl LatLng {
+    const EARTH_RADIUS_METERS: f32 = 6_371_000.0;
+    pub fn distance_meters(&self, other: LatLng) -> f32 {
+        let lat1 = self.latitude.to_radians();
+        let lat2 = other.latitude.to_radians();
+        let lon1 = self.longitude.to_radians();
+        let lon2 = other.longitude.to_radians();
+
+        let dlat = lat2 - lat1;
+        let dlon = lon2 - lon1;
+
+        let lat_sin = (dlat / 2.0).sin();
+        let lon_sin = (dlon / 2.0).sin();
+
+        let hav_theta = lat_sin * lat_sin + lon_sin * lon_sin * lat1.cos() * lat2.cos();
+
+        let theta = hav_theta.sqrt().asin() / 2.0;
+
+        return theta * Self::EARTH_RADIUS_METERS;
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -35,10 +75,9 @@ pub struct Shape {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub struct Trip {
-    pub route_id: RouteId,
-    pub shape_id: ShapeId,
+pub struct TripPattern {
     pub stops: Vec<StopId>,
+    pub trips: Vec<TripId>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -48,8 +87,24 @@ pub struct Route {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct StopTime {
-    pub trip_id: TripId,
     pub stop_id: StopId,
+    pub arrival_time: ServiceTime,
+    pub departure_time: ServiceTime,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Trip {
+    pub route_id: RouteId,
+    pub shape_id: ShapeId,
+    pub service_id: ServiceId,
+    pub trip_pattern_id: TripPatternId,
+    pub stop_times: Vec<StopTime>,
+}
+
+impl Trip {
+    pub fn start_time(&self) -> ServiceTime {
+        self.stop_times[0].arrival_time
+    }
 }
 
 // A bunch of stops named the same way
@@ -81,6 +136,23 @@ impl MetaStop {
     }
 }
 
+pub struct ServiceWeekdaySchedule {
+    pub weekday: Weekday,
+    pub start_date: ServiceDate,
+    pub end_date: ServiceDate,
+}
+
+pub struct ServiceCalendar {
+    pub active_weekdays: Vec<ServiceWeekdaySchedule>,
+    pub active_dates: HashSet<ServiceDate>,
+    pub inactive_dates: HashSet<ServiceDate>,
+}
+
+pub struct FootPath {
+    pub to: StopId,
+    pub distance_meters: f32,
+}
+
 pub struct TransitInfo {
     pub meta_stops: Vec<MetaStop>,
     pub meta_stops_by_name: HashMap<String, MetaStopId>,
@@ -89,9 +161,14 @@ pub struct TransitInfo {
     pub routes: Vec<Route>,
     pub shapes: Vec<Shape>,
     pub trips: Vec<Trip>,
+    pub services: Vec<ServiceCalendar>,
+    pub trip_patterns: Vec<TripPattern>,
+    pub foot_paths: Vec<Vec<FootPath>>,
 }
 
 impl TransitInfo {
+    const MAX_FOOTPATH_DISTANCE_METERS: f32 = 50.0;
+
     pub fn new() -> Self {
         Self {
             meta_stops: Vec::new(),
@@ -100,6 +177,9 @@ impl TransitInfo {
             routes: Vec::new(),
             shapes: Vec::new(),
             trips: Vec::new(),
+            services: Vec::new(),
+            trip_patterns: Vec::new(),
+            foot_paths: Vec::new(),
         }
     }
 
@@ -139,6 +219,7 @@ impl TransitInfo {
 
             self.meta_stops[meta_stop_id].add_stop(id, &new_stop);
             self.stops.push(new_stop);
+            self.foot_paths.push(Vec::new());
         }
 
         stop_id_map
@@ -188,32 +269,235 @@ impl TransitInfo {
         shape_id_map
     }
 
+    fn add_calendar(&mut self, gtfs: &Gtfs) -> HashMap<String, ServiceId> {
+        let mut service_id_map = HashMap::new();
+
+        for calendar_entry in &gtfs.calendar {
+            let ServiceId(id) = if service_id_map.contains_key(&calendar_entry.service_id) {
+                *service_id_map.get(&calendar_entry.service_id).unwrap()
+            } else {
+                let id = ServiceId(self.services.len());
+                service_id_map.insert(calendar_entry.service_id.clone(), id);
+                self.services.push(ServiceCalendar {
+                    active_weekdays: Vec::new(),
+                    active_dates: HashSet::new(),
+                    inactive_dates: HashSet::new(),
+                });
+                id
+            };
+
+            let mut active_weekdays = Vec::new();
+            push_if_available!(calendar_entry.monday, Mon, active_weekdays);
+            push_if_available!(calendar_entry.tuesday, Tue, active_weekdays);
+            push_if_available!(calendar_entry.wednesday, Wed, active_weekdays);
+            push_if_available!(calendar_entry.thursday, Thu, active_weekdays);
+            push_if_available!(calendar_entry.friday, Fri, active_weekdays);
+            push_if_available!(calendar_entry.saturday, Sat, active_weekdays);
+            push_if_available!(calendar_entry.sunday, Sun, active_weekdays);
+
+            self.services[id].active_weekdays = active_weekdays
+                .into_iter()
+                .map(|w| ServiceWeekdaySchedule {
+                    weekday: w,
+                    start_date: calendar_entry.start_date,
+                    end_date: calendar_entry.end_date,
+                })
+                .collect();
+        }
+
+        for calendar_date_entry in &gtfs.calendar_dates {
+            let ServiceId(id) = if service_id_map.contains_key(&calendar_date_entry.service_id) {
+                *service_id_map.get(&calendar_date_entry.service_id).unwrap()
+            } else {
+                let id = ServiceId(self.services.len());
+                service_id_map.insert(calendar_date_entry.service_id.clone(), id);
+                self.services.push(ServiceCalendar {
+                    active_weekdays: Vec::new(),
+                    active_dates: HashSet::new(),
+                    inactive_dates: HashSet::new(),
+                });
+                id
+            };
+
+            match calendar_date_entry.exception_type {
+                ServiceAdded => {
+                    self.services[id]
+                        .active_dates
+                        .insert(calendar_date_entry.date);
+                }
+                ServiceRemoved => {
+                    self.services[id]
+                        .active_dates
+                        .insert(calendar_date_entry.date);
+                }
+            }
+        }
+
+        service_id_map
+    }
+
+    fn group_stop_times_by_trip(
+        &self,
+        gtfs: &Gtfs,
+        stop_id_map: &HashMap<String, StopId>,
+    ) -> HashMap<String, Vec<StopTime>> {
+        let mut stop_times: HashMap<String, Vec<&GtfsStopTime>> = HashMap::new();
+
+        for gtfs_stop_time in &gtfs.stop_times {
+            if !stop_times.contains_key(&gtfs_stop_time.trip_id) {
+                stop_times.insert(gtfs_stop_time.trip_id.clone(), Vec::new());
+            }
+
+            stop_times
+                .get_mut(&gtfs_stop_time.trip_id)
+                .unwrap()
+                .push(gtfs_stop_time);
+        }
+
+        stop_times
+            .iter_mut()
+            .map(|(trip_id, gtfs_stop_times)| {
+                gtfs_stop_times.sort_by(|s1, s2| s1.stop_sequence.cmp(&s2.stop_sequence));
+                let stop_times = gtfs_stop_times
+                    .iter()
+                    .map(|s| StopTime {
+                        stop_id: *stop_id_map.get(&s.stop_id).unwrap(),
+                        arrival_time: s.arrival_time,
+                        departure_time: s.departure_time,
+                    })
+                    .collect();
+                (trip_id.clone(), stop_times)
+            })
+            .collect()
+    }
+
+    fn create_trip_patterns(
+        &mut self,
+        stop_times_map: &HashMap<String, Vec<StopTime>>,
+    ) -> HashMap<String, TripPatternId> {
+        let mut trip_patterns: HashMap<Vec<StopId>, TripPatternId> = HashMap::new();
+        let mut trip_pattern_map = HashMap::new();
+
+        for (trip_id, stop_times) in stop_times_map.iter() {
+            let stops: Vec<StopId> = stop_times.iter().map(|s| s.stop_id).collect();
+
+            let pattern_id = if !trip_patterns.contains_key(&stops) {
+                let id = TripPatternId(self.trip_patterns.len());
+                self.trip_patterns.push(TripPattern {
+                    stops: stops.clone(),
+                    trips: Vec::new(),
+                });
+
+                trip_patterns.insert(stops, id);
+                id
+            } else {
+                *trip_patterns.get(&stops).unwrap()
+            };
+
+            trip_pattern_map.insert(trip_id.clone(), pattern_id);
+        }
+
+        trip_pattern_map
+    }
+
     fn add_trips(
         &mut self,
         gtfs: &Gtfs,
-        stop_id_map: &HashMap<String, StopId>,
         route_id_map: &HashMap<String, RouteId>,
         shape_id_map: &HashMap<String, ShapeId>,
+        service_id_map: &HashMap<String, ServiceId>,
+        mut stop_times_map: HashMap<String, Vec<StopTime>>,
+        trip_patterns_map: &HashMap<String, TripPatternId>,
     ) -> HashMap<String, TripId> {
         let mut trip_id_map = HashMap::new();
 
         for trip in &gtfs.trips {
             let id = TripId(self.trips.len());
             trip_id_map.insert(trip.trip_id.clone(), id);
+            let trip_pattern_id = *trip_patterns_map.get(&trip.trip_id).unwrap();
             self.trips.push(Trip {
                 route_id: *route_id_map.get(&trip.route_id).unwrap(),
                 shape_id: *shape_id_map.get(&trip.shape_id).unwrap(),
-                stops: Vec::new(),
-            })
+                service_id: *service_id_map.get(&trip.service_id).unwrap(),
+                stop_times: stop_times_map.remove(&trip.trip_id).unwrap(),
+                trip_pattern_id: trip_pattern_id,
+            });
+            self.trip_patterns[trip_pattern_id.0].trips.push(id);
         }
 
         trip_id_map
+    }
+
+    fn sort_trip_patterns(&mut self) {
+        self.trip_patterns.iter_mut().for_each(|p| {
+            p.trips.sort_by(|t1, t2| {
+                self.trips[t1.0]
+                    .start_time()
+                    .cmp(&self.trips[t2.0].start_time())
+            })
+        });
+    }
+
+    fn update_footpaths(&mut self, new_stops: Vec<StopId>) {
+        // Naive implementation that assumes we can always walk in straight line between stops.
+        // In Kraków this mostly works.
+        for (stop_idx, stop) in self.stops.iter().enumerate() {
+            for new_stop_id in &new_stops {
+                let new_stop = &self.stops[new_stop_id.0];
+
+                let distance_meters = stop.position.distance_meters(new_stop.position);
+                if distance_meters <= Self::MAX_FOOTPATH_DISTANCE_METERS {
+                    self.foot_paths[stop_idx].push(FootPath {
+                        to: *new_stop_id,
+                        distance_meters: distance_meters,
+                    });
+                    self.foot_paths[new_stop_id.0].push(FootPath {
+                        to: StopId(stop_idx),
+                        distance_meters: distance_meters,
+                    })
+                }
+            }
+        }
     }
 
     pub fn add_gtfs(&mut self, gtfs: &Gtfs) {
         let stop_id_map = self.add_stops(&gtfs);
         let route_id_map = self.add_routes(&gtfs);
         let shape_id_map = self.add_shapes(&gtfs);
-        self.add_trips(gtfs, &stop_id_map, &route_id_map, &shape_id_map);
+        let service_id_map = self.add_calendar(gtfs);
+        let stop_times_map = self.group_stop_times_by_trip(gtfs, &stop_id_map);
+        let trip_patterns_map = self.create_trip_patterns(&stop_times_map);
+        self.sort_trip_patterns();
+        self.add_trips(
+            gtfs,
+            &route_id_map,
+            &shape_id_map,
+            &service_id_map,
+            stop_times_map,
+            &trip_patterns_map,
+        );
+        self.update_footpaths(stop_id_map.values().copied().collect());
+    }
+
+    pub fn trip_active(&self, trip_id: TripId, date: ServiceDate) -> bool {
+        let service_id = self.trips[trip_id.0].service_id;
+        let calendar = &self.services[service_id.0];
+
+        if calendar.active_dates.contains(&date) {
+            true
+        } else if calendar.inactive_dates.contains(&date) {
+            false
+        } else {
+            let weekday = date.weekday();
+            for active_weekday_schedule in &calendar.active_weekdays {
+                if weekday == active_weekday_schedule.weekday
+                    && active_weekday_schedule.start_date <= date
+                    && date <= active_weekday_schedule.end_date
+                {
+                    return true;
+                }
+            }
+            false
+        }
     }
 }

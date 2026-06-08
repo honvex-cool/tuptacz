@@ -31,6 +31,7 @@ use tuptacz::{
         gtfs::load_gtfs,
         model::{MetaStop, Shape, Stop, TransitInfo},
     },
+    transit_router::{HasTransitInfo, transit_router},
 };
 
 const SERVER_ADDRESS: &str = "0.0.0.0:3000";
@@ -67,6 +68,12 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 struct AppState {
     graph: AdjList<Intersection, Road>,
     transit_info: TransitInfo,
+}
+
+impl HasTransitInfo for AppState {
+    fn transit_info(&self) -> &TransitInfo {
+        &self.transit_info
+    }
 }
 
 type SharedAppState = Arc<AppState>;
@@ -141,40 +148,6 @@ async fn socket_loop(
     }
 }
 
-async fn get_stops(State(state): State<Arc<AppState>>) -> Json<Vec<MetaStop>> {
-    Json((&state.transit_info).meta_stops.iter().cloned().collect())
-}
-
-async fn get_shapes(State(state): State<Arc<AppState>>) -> Json<Vec<Shape>> {
-    Json(
-        (&state.transit_info)
-            .shapes
-            .iter()
-            .cloned()
-            .collect::<Vec<Shape>>(),
-    )
-}
-#[derive(Debug, Serialize, Deserialize)]
-struct SearchRequest {
-    start: usize,
-    end: usize,
-}
-
-async fn search(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<SearchRequest>,
-) -> Json<()> {
-    println!("{:?}", payload);
-    Json(())
-}
-
-fn gtfs_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/stops", get(get_stops))
-        .route("/shapes", get(get_shapes))
-        .route("/search", post(search))
-}
-
 #[tokio::main]
 async fn main() {
     let graph = load("maps/krakow.osm.pbf").unwrap();
@@ -196,7 +169,7 @@ async fn main() {
     let app = Router::new()
         .route("/ws", any(ws_handler))
         .route("/api/health-check", get(health_check_handler))
-        .nest("/api/transit", gtfs_router())
+        .nest("/api/transit", transit_router())
         .with_state(Arc::new(app_state));
 
     let listener = TcpListener::bind(SERVER_ADDRESS).await.unwrap();
