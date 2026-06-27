@@ -1,9 +1,10 @@
+/// Representation of raw GTFS data as rust structures
 use chrono::{Datelike, NaiveDate, Weekday};
 use csv::Reader;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::path::Path;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
 pub struct ServiceTime(pub u32);
 
 impl<'de> Deserialize<'de> for ServiceTime {
@@ -43,6 +44,10 @@ pub struct ServiceDate(pub NaiveDate);
 impl ServiceDate {
     pub fn weekday(&self) -> Weekday {
         self.0.weekday()
+    }
+
+    pub fn next_day(&self) -> ServiceDate {
+        ServiceDate(self.0.checked_add_days(chrono::Days::new(1)).unwrap())
     }
 }
 
@@ -124,6 +129,7 @@ pub struct GtfsShapeEntry {
 pub struct GtfsRoute {
     pub route_id: String,
     pub route_short_name: String,
+    pub route_type: u32,
 }
 
 #[derive(Debug, Deserialize)]

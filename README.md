@@ -55,6 +55,24 @@ Alternatively you can follow the below instructions to run the frontend and the 
 4. Run `npm run preview` to start the app
 
 
+## AI Usage
+
+AI was mostly used for prototyping, debugging, and reviewing ideas, rather than vibe-coding the app.
+
+The majority of the code was written directly by hand, with AI helping with minor snippets.
+
+## Ideas, experiments, and failures
+
+### CH
+
+### RAPTOR
+
+There were few problems with our implementation along the way:
+- First, the algorithm allowed "going back in time" which we figured was due to saving wrong info in the wrong place.
+- Redundant journeys:
+    - The current implementation does a search from a set of start stops to a set of end stops (because often there are at least two stops with the same name). This causes a quadratic number of "raw" journeys returned - from each start to each end. Of course many of them are redundant and differ only in the walking to first/last stop.
+    - What's even funnier is that for bigger hubs the algorithm would return *a longer journey* with *more changes* - with the only difference being last *physical* stop. An example of this would be going one stop further, then immediately going back - however the backwards route would stop in a physically different place and this maneouver would apparently be faster than walking through the hub with the speed we assumed. (The time to the hub is longer, but the time to this particular physical stop would be shorter).
+    - The above problems were fixed by implementing deduplication that filters journeys with the same execution, and those that are Pareto-dominated.
 ## Authors
 
 - Jakub Oskwarek @honvex-cool

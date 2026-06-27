@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::transit::{
     model::{MetaStop, MetaStopId, Route, Shape, Stop, StopTime, TransitInfo, Trip, TripId},
     raptor::{Journey, search_journeys},
+    rich_journey::{RichJourney, enrich_journey},
 };
 
 pub trait HasTransitInfo {
@@ -49,7 +50,7 @@ async fn get_trip<S>(State(state): State<Arc<S>>, Path(trip_id): Path<TripId>) -
 where
     S: HasTransitInfo + Send + Sync + 'static,
 {
-    let trip = &state.transit_info().trips[trip_id.0];
+    let trip = &state.transit_info().get_trip(trip_id);
 
     Json(TripDto {
         route: state.transit_info().routes[trip.route_id.0].clone(),
@@ -58,7 +59,7 @@ where
             .stops
             .iter()
             .map(|stop_id| state.transit_info().stops[stop_id.0].clone())
-            .collect()
+            .collect(),
     })
 }
 
@@ -72,7 +73,7 @@ struct SearchRequest {
 async fn search<S>(
     State(state): State<Arc<S>>,
     Json(payload): Json<SearchRequest>,
-) -> Json<Vec<Journey>>
+) -> Json<Vec<RichJourney>>
 where
     S: HasTransitInfo + Send + Sync,
 {
@@ -83,6 +84,11 @@ where
         MetaStopId(payload.end),
         payload.departure_time,
     );
+
+    let journeys = journeys
+        .iter()
+        .map(|j| enrich_journey(state.transit_info(), j))
+        .collect();
     Json(journeys)
 }
 

@@ -1,5 +1,5 @@
+// A representation of transit network structure a bit more than raw GTFS
 use crate::{
-    geo,
     transit::gtfs::{
         Gtfs,
         GtfsDateExceptionType::{ServiceAdded, ServiceRemoved},
@@ -11,6 +11,8 @@ use chrono::{Datelike, Weekday};
 use serde::{Serialize, Deserialize};
 use std::{collections::HashMap, collections::HashSet};
 
+
+// Macro for definitions of id-like types that use the same underlying represenation, but we want to distinguish them in code.
 macro_rules! id_type {
     ($name:ident, $type:ty) => {
         #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18,6 +20,7 @@ macro_rules! id_type {
     };
 }
 
+// GTFS represents calendar with a column for each day, so to avoid duplication 7 times we use this macro.
 macro_rules! push_if_available {
     ($field:expr, $weekday:ident, $dest:expr) => {
         if let Available = $field {
@@ -42,6 +45,8 @@ pub struct LatLng {
 
 impl LatLng {
     const EARTH_RADIUS_METERS: f32 = 6_371_000.0;
+
+    // https://en.wikipedia.org/wiki/Haversine_formula#Formulation
     pub fn distance_meters(&self, other: LatLng) -> f32 {
         let lat1 = self.latitude.to_radians();
         let lat2 = other.latitude.to_radians();
@@ -56,7 +61,7 @@ impl LatLng {
 
         let hav_theta = lat_sin * lat_sin + lon_sin * lon_sin * lat1.cos() * lat2.cos();
 
-        let theta = hav_theta.sqrt().asin() / 2.0;
+        let theta = hav_theta.sqrt().asin() * 2.0;
 
         return theta * Self::EARTH_RADIUS_METERS;
     }
@@ -80,9 +85,26 @@ pub struct TripPattern {
     pub trips: Vec<TripId>,
 }
 
+#[derive(Debug, Serialize, Clone, Copy)]
+pub enum RouteType {
+    Bus,
+    Tram
+}
+
+impl RouteType {
+    fn from_id(id: u32) -> Self {
+        match id {
+            3 => Self::Bus,
+            900 => Self::Tram,
+            _ => panic!("Unknown route type, {}", id)
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct Route {
     pub short_name: String,
+    pub route_type: RouteType
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -151,6 +173,7 @@ pub struct ServiceCalendar {
     pub inactive_dates: HashSet<ServiceDate>,
 }
 
+#[derive(Debug)]
 pub struct FootPath {
     pub to: StopId,
     pub distance_meters: f32,
@@ -163,7 +186,7 @@ pub struct TransitInfo {
     pub stops: Vec<Stop>,
     pub routes: Vec<Route>,
     pub shapes: Vec<Shape>,
-    pub trips: Vec<Trip>,
+    trips: Vec<Trip>,
     pub services: Vec<ServiceCalendar>,
     pub trip_patterns: Vec<TripPattern>,
     pub foot_paths: Vec<Vec<FootPath>>,
@@ -184,6 +207,24 @@ impl TransitInfo {
             trip_patterns: Vec::new(),
             foot_paths: Vec::new(),
         }
+    }
+
+    pub fn get_trip(&self, trip_id: TripId) -> &Trip {
+        &self.trips[trip_id.0]
+    }
+
+    pub fn get_trip_stops(&self, trip_id: TripId) -> &[StopId] {
+        let trip = self.get_trip(trip_id);
+        let pattern = &self.trip_patterns[trip.trip_pattern_id.0];
+        &pattern.stops
+    }
+
+    pub fn get_route(&self, route_id: RouteId) -> &Route {
+        &self.routes[route_id.0]
+    }
+
+    pub fn get_stop(&self, stop_id: StopId) -> &Stop {
+        &self.stops[stop_id.0]
     }
 
     fn add_stops(&mut self, gtfs: &Gtfs) -> HashMap<String, StopId> {
@@ -236,6 +277,7 @@ impl TransitInfo {
             route_id_map.insert(route.route_id.to_owned(), id);
             self.routes.push(Route {
                 short_name: route.route_short_name.clone(),
+                route_type: RouteType::from_id(route.route_type)
             });
         }
 
