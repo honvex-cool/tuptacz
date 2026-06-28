@@ -7,8 +7,8 @@ use crate::{
         GtfsShapeEntry, GtfsStopTime, ServiceDate, ServiceTime,
     },
 };
-use chrono::{Datelike, Weekday};
-use serde::{Serialize, Deserialize};
+use chrono::Weekday;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, collections::HashSet};
 
 

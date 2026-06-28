@@ -1,14 +1,14 @@
-use std::path::Path;
 use std::sync::Arc;
+use std::{ops::Deref, path::Path};
 
 use axum::{
-    Json, Router,
+    Router,
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
-    routing::{any, get, post},
+    routing::{any, get},
 };
 
 use futures_util::{
@@ -16,21 +16,17 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use tokio::net::TcpListener;
 use tokio::select;
 
 use tuptacz::{
-    algo::{EventClient, InteractiveAlgo},
-    graphs::{Edge, Graph, repr::AdjList},
-    pathfinding::{Num, dijkstra::Dijkstra},
+    algo::EventClient,
+    graphs::{Graph, repr::AdjLists},
     presentation::{self, GraphEvent},
-    roads::{Intersection, Road, load},
-    transit::{
-        gtfs::load_gtfs,
-        model::{MetaStop, Shape, Stop, TransitInfo},
-    },
+    roads::{Intersection, Road},
+    transit::{gtfs::load_gtfs, model::TransitInfo},
     transit_router::{HasTransitInfo, transit_router},
 };
 
@@ -66,7 +62,7 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 }
 
 struct AppState {
-    graph: AdjList<Intersection, Road>,
+    graph: AdjLists<Intersection, Road>,
     transit_info: TransitInfo,
 }
 
@@ -91,18 +87,21 @@ async fn handle_socket(socket: WebSocket, state: SharedAppState) {
     socket_loop(sender, receiver, state).await;
 }
 
-fn init_graph_event<V, E>(graph: &AdjList<V, E>) -> GraphEvent<V, E>
+fn init_graph_event<V, E>(graph: &AdjLists<V, E>) -> GraphEvent<V, E>
 where
     V: Clone,
     E: Clone,
 {
-    let vertices = graph.iter_vertices().map(|v| v.clone()).collect();
+    let vertices = graph
+        .iter_vertices()
+        .map(|vertex| vertex.deref().clone())
+        .collect();
     let edges = graph
         .iter_edges()
-        .map(|(source, target, properties)| presentation::Edge {
-            source,
-            target,
-            properties: properties.clone(),
+        .map(|edge| presentation::Edge {
+            source: edge.start.id,
+            target: edge.end.id,
+            properties: edge.deref().clone(),
         })
         .collect();
 
@@ -150,7 +149,7 @@ async fn socket_loop(
 
 #[tokio::main]
 async fn main() {
-    let graph = load("maps/krakow.osm.pbf").unwrap();
+    let graph = AdjLists::with_size(0);
 
     let gtfs_t = load_gtfs(Path::new("gtfs/KRK/T"));
     let gtfs_a = load_gtfs(Path::new("gtfs/KRK/A"));

@@ -6,11 +6,11 @@ use axum::{
     routing::{get, post},
 };
 
-use chrono::{FixedOffset, Utc};
+use chrono::FixedOffset;
 use serde::{Deserialize, Serialize};
 
 use crate::transit::{
-    model::{MetaStop, MetaStopId, Route, Shape, Stop, StopTime, TransitInfo, Trip, TripId},
+    model::{MetaStop, MetaStopId, Route, Shape, Stop, StopTime, TransitInfo, TripId},
     raptor::{Journey, search_journeys},
     rich_journey::{RichJourney, enrich_journey},
 };

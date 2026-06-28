@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Default, Clone, Copy, Serialize)]
 pub struct Coords {
