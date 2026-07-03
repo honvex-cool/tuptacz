@@ -27,6 +27,7 @@ pub struct RichJourneyLeg {
     route_name: String,
     route_type: RouteType,
     stops: Vec<RichJourneyStop>,
+    walked_distance: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +58,7 @@ fn enrich_leg(transit_info: &TransitInfo, leg: &Leg) -> RichJourneyLeg {
         route_name: route.short_name.clone(),
         route_type: route.route_type,
         stops: stops,
+        walked_distance: leg.walked_distance
     }
 }
 

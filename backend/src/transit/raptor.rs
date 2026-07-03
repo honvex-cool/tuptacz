@@ -33,6 +33,9 @@ struct Search {
     parent: Vec<Vec<Option<Leg>>>,
 }
 
+// On top of slow walk speed we add two minutes of buffer for delays
+const TRANSFER_DURATION_SECONDS: u32 = 120;
+
 fn init_earliest_trip(transit_view: &TransitView, search: &Search) -> Vec<Vec<Option<TravelTrip>>> {
     let mut earliest_trip: Vec<Vec<Option<TravelTrip>>> = transit_view
         .trip_patterns()
@@ -44,7 +47,7 @@ fn init_earliest_trip(transit_view: &TransitView, search: &Search) -> Vec<Vec<Op
             if let Some(earliest_arrival_time) = search.earliest_arrival[stop_id.0] {
                 for trip_id in pattern.trips() {
                     let trip_stop_time = &transit_view.trip_by_id(*trip_id).stop_times[stop_idx];
-                    if trip_stop_time.departure_time > earliest_arrival_time {
+                    if trip_stop_time.departure_time > earliest_arrival_time.plus_seconds(TRANSFER_DURATION_SECONDS) {
                         earliest_trip[pattern_id][stop_idx] = Some(TravelTrip {
                             trip_id: *trip_id,
                             start_stop_idx: stop_idx,
@@ -73,6 +76,7 @@ fn round(transit_view: &TransitView, search: &mut Search) {
         let mut active_trip: Option<TravelTrip> = None;
 
         for (stop_idx, stop_id) in trip_pattern.stops().enumerate() {
+            // Check if we can catch an earlier trip of the same pattern at currently processed stop
             if let Some(trip) = &earliest_trip[pattern_idx][stop_idx] {
                 if let Some(active_trip_stop) = active_trip {
                     if trip.departure_time

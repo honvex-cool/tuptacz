@@ -2,10 +2,10 @@ import { useEffect, useState } from "react"
 import { apiGet, apiPost } from "../core/ws"
 import "./JakDotuptam.css"
 
-import { MapContainer, Polyline, TileLayer, Marker, Tooltip } from 'react-leaflet'
+import { MapContainer, Polyline, TileLayer, Marker, Tooltip, Circle, CircleMarker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 
-import { journeyArrivalTime, journeyDepartureTime, type Journey, type JourneyLeg, type RouteType, type Shape, type Stop, type Trip } from "./model"
+import { journeyArrivalTime, journeyDepartureTime, type Journey, type JourneyLeg, type JourneyStop, type RouteType, type Shape, type Stop, type Trip } from "./model"
 import Select from "react-select"
 import "dayjs/locale/pl";
 import dayjs from "dayjs"
@@ -40,8 +40,6 @@ async function getTrip(trip_id: number): Promise<Trip> {
     return apiGet(`/transit/trip/${trip_id}`).then(res => res.json())
 }
 
-
-
 const LINE_COLORS = [
     "#ff0211",
     "#bc6700",
@@ -52,46 +50,48 @@ const LINE_COLORS = [
 ]
 
 const transparentIcon = L.divIcon({ className: '', iconSize: [0, 0] })
-function JourneyPolylines(props: { journey: Journey }) {
 
+function LegPolyline(props: { leg: JourneyLeg, index: number }) {
+    let positions = [];
+    for (const stop of props.leg.stops) {
+        positions.push([stop.position.latitude, stop.position.longitude])
+    }
+    const color = LINE_COLORS[props.index];
+    const mid = positions[Math.floor(positions.length / 2)]
+    let icon = props.leg.route_type == "Tram" ? faTrainTram : faBus;
+    return (
+        <>
+            <Polyline key={props.index}
+                positions={positions} color={color} weight={10}>
+                <Marker position={mid} icon={transparentIcon}>
+                    <Tooltip permanent direction="center" offset={[0, 0]}>
+                        <FontAwesomeIcon icon={icon} />
+                        {props.leg.route_name}
+                    </Tooltip>
+                </Marker>
+            </Polyline>
+            {props.leg.stops.map(stop => {
+                return (
+                    <CircleMarker center={[stop.position.latitude, stop.position.longitude]} radius={8} fill={true} fillOpacity={1} fillColor={"#eeeeee"} color={color}>
+                        <Popup>
+                            {stop.stop_name}
+                        </Popup>
+                    </CircleMarker>
+
+                )
+            })}
+        </>
+    )
+}
+
+function JourneyPolylines(props: { journey: Journey }) {
     if (!props.journey) {
         return (<></>)
     }
 
-    let lines = []
-    for (let i = 0; i < props.journey.legs.length; i++) {
-        const leg = props.journey.legs[i]
-        let positions = [];
-        for (const stop of leg.stops) {
-            console.log(stop)
-            positions.push([stop.position.latitude, stop.position.longitude])
-        }
-        const color = LINE_COLORS[i];
-        lines.push([color, positions, leg.route_name, leg.route_type])
-    }
-
-    console.log(lines)
-
     return (
         <>
-            {
-                lines.map(([color, positions, name, type], i) => {
-                    const mid = positions[Math.floor(positions.length / 2)]
-                    let icon = type == "Tram" ? faTrainTram : faBus;
-                    return (<Polyline key={i}
-                        positions={positions} color={color} weight={10}>
-                        <Marker position={mid} icon={transparentIcon}>
-                            <Tooltip permanent direction="center" offset={[0, 0]}>
-                                <FontAwesomeIcon icon={icon} />
-                                {name}
-                            </Tooltip>
-                        </Marker>
-                    </Polyline>
-                    )
-                }
-                )
-
-            }
+            {props.journey.legs.map((leg, index) => (<LegPolyline leg={leg} index={index} />))}
         </>
     )
 }
@@ -125,14 +125,85 @@ function formatDurationSeconds(duration: number) {
     }
 }
 
+function RouteBadge(props: { route_name: string, route_type: RouteType, color: string }) {
+    return (
+        <div className={`journey-line`} style={{ backgroundColor: props.color }}>
+            {routeTypeIcon(props.route_type)} {props.route_name}
+        </div>
+    )
+}
+
 function JourneySummaryLine(props: { leg: JourneyLeg, index: number }) {
     let leg = props.leg;
     let color = LINE_COLORS[props.index]
     return (
-        <div className={`journey-line line-type-${leg.route_type}`}
-            style={{ backgroundColor: color }}
-        >
-            {routeTypeIcon(leg.route_type)} {leg.route_name}
+        <RouteBadge route_name={leg.route_name} route_type={leg.route_type} color={color}/>
+    )
+}
+
+function pluralizeStops(stops) {
+    if (stops === 1) {
+        return "przystanek"
+    } else if (10 < stops % 100 && stops % 100 < 20) {
+        return "przystanków"
+    } else if (stops % 10 === 2 || stops % 10 === 3 || stops % 10 === 4) {
+        return "przystanki"
+    } else {
+        return "przystanków"
+    }
+}
+
+
+function LegRow(props: { leg: JourneyLeg, color: string }) {
+    const leg = props.leg;
+    const color = props.color;
+
+    const start = leg.stops[0];
+    const end = leg.stops[leg.stops.length - 1];
+
+    return (
+        <div className="leg-details">
+            <div className="leg-details-timeline">
+                <div style={{ border: `1px solid ${color}`, width: "10px", height: "10px", flexShrink: 0}}></div>
+                <div style={{ backgroundColor: color,  width: "1px", height: "10px", flexGrow: 1}}></div>
+                <div style={{ border: `1px solid ${color}`, width: "10px", height: "10px", flexShrink: 0}}></div>
+            </div>
+            <div className="leg-details-content">
+                <div> <div className="stop-name">{start.stop_name}</div> {formatTimeSeconds(start.arrival_time)} </div>
+                <div style={{display: "flex", gap: "10px"}}> <div style={{ color: color }}>{routeTypeIcon(leg.route_type)} {leg.route_name}</div> <div>{leg.stops.length} {pluralizeStops(leg.stops.length)}</div> </div>
+                <div>{formatTimeSeconds(end.arrival_time)} <div className="stop-name">{end.stop_name}</div></div>
+            </div>
+        </div>
+    )
+}
+
+function TransferRow(props: { from: JourneyStop, to: JourneyStop, walkedDistance: number}) {
+    return (
+        <div className="transfer-details">
+            <div className="transfer-details-timeline">
+                <div style={{ borderLeft: "2px dashed #888", height: "20px" }}></div>
+            </div>
+            <div className="transfer-details-content">
+                {props.walkedDistance}m pieszo
+            </div>
+        </div>
+    )
+}
+
+function JourneyDetails(props: { journey: Journey }) {
+    let rows = []
+    for (let i = 0; i < props.journey.legs.length; i++) {
+        const leg = props.journey.legs[i];
+        rows.push((<LegRow leg={leg} color={LINE_COLORS[i]} />))
+        if (i + 1 < props.journey.legs.length) {
+            const nextLeg = props.journey.legs[i + 1];
+            rows.push((<TransferRow from={leg.stops[leg.stops.length - 1]} to={nextLeg.stops[0]} walkedDistance={leg.walked_distance}/>))
+        }
+    }
+
+    return (
+        <div className="journey-details">
+            {rows}
         </div>
     )
 }
@@ -152,17 +223,20 @@ function JourneySummary(props: { journey: Journey, isActive: boolean, onClick })
     let activeClass = props.isActive ? "active" : ""
 
     return (
-        <div className={`journey-summary ${activeClass}`} onClick={props.onClick}>
-            <div className="journey-summary-top">
-                <div className="journey-duration text-primary">{formatDurationSeconds(duration)}</div>
-                <div>
-                    <div>{formatTimeSeconds(departureTime)} - {formatTimeSeconds(arrivalTime)}</div>
-                    <div>Przesiadki: {changeCount}</div>
+        <div>
+            <div className={`journey-summary ${activeClass}`} onClick={props.onClick}>
+                <div className="journey-summary-top">
+                    <div className="journey-duration text-primary">{formatDurationSeconds(duration)}</div>
+                    <div>
+                        <div>{formatTimeSeconds(departureTime)} - {formatTimeSeconds(arrivalTime)}</div>
+                        <div>Przesiadki: {changeCount}</div>
+                    </div>
+                </div>
+                <div className="journey-lines">
+                    {journey.legs.map((leg, i) => (<JourneySummaryLine leg={leg} index={i} />))}
                 </div>
             </div>
-            <div className="journey-lines">
-                {journey.legs.map((leg, i) => (<JourneySummaryLine leg={leg} index={i} />))}
-            </div>
+            {props.isActive ? <JourneyDetails journey={journey} /> : <></>}
         </div>
     )
 }
@@ -197,7 +271,7 @@ export default function JakDotuptam() {
         },
         )
             .then(res => res.json())
-            .then(journeys => { console.log("AAAA: ", journeys); setJourneys(journeys) })
+            .then(journeys => { setJourneys(journeys) })
     }
 
     return <div id="jakdotuptam-container">

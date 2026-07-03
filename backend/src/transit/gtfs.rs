@@ -7,6 +7,12 @@ use std::path::Path;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
 pub struct ServiceTime(pub u32);
 
+impl ServiceTime {
+    pub fn plus_seconds(&self, seconds: u32) -> ServiceTime {
+        ServiceTime(self.0 + seconds)
+    }
+}
+
 impl<'de> Deserialize<'de> for ServiceTime {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

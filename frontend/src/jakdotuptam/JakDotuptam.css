@@ -13,21 +13,17 @@
     flex-direction: column;
     gap: 5px;
     padding: 10px;
-    width: 300px;
+    width: 350px;
 }
 
 .journey-summary {
     display: flex;
     flex-direction: column;
-    padding:  5px;;
+    padding: 5px;
 }
 
 .journey-summary {
     cursor: pointer;
-}
-
-.journey-summary.active {
-    border-left: 2px solid var(--accent);
 }
 
 .journey-summary-top {
@@ -43,6 +39,44 @@
 
 .journey-line {
     display: block;
-    padding: 5px;
+    padding: 4px;
     color: white;
+}
+
+.journey-details {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 5px;
+    gap: 10px;
+}
+
+.leg-details,
+.transfer-details {
+    display: flex;
+    gap: 10px;
+}
+
+.leg-details-timeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 7px 0;
+}
+
+.leg-details-content,
+.transfer-details-content {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.stop-name {
+    color: #eee;
+}
+
+.transfer-details-timeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 10px;
 }

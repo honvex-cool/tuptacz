@@ -68,7 +68,8 @@ export type JourneyLeg = {
   trip_id: number
   route_name: string
   route_type: RouteType
-  stops: JourneyStop[]
+  stops: JourneyStop[],
+  walked_distance: number
 }
 
 export type Journey = {
