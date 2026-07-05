@@ -1,10 +1,10 @@
 import './index.css'
-import App from './App.tsx'
 
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import Main from './Main.tsx';
+import TuptaCh from './tuptach/TuptaCh.tsx'
 import JakDotuptam from './jakdotuptam/JakDotuptam.tsx';
 import Home from './home/Home.tsx';
 
@@ -15,7 +15,7 @@ const router = createBrowserRouter([
   },
   {
     path: "/tuptach",
-    element: <Main title="TuptaCH"> <App /> </Main>
+    element: <Main title="TuptaCH"> <TuptaCh /> </Main>
   },
   {
     path: "/jakdotuptam",

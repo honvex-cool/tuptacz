@@ -6,7 +6,7 @@ use chrono::{DateTime, FixedOffset, NaiveTime, Timelike};
 use serde::Serialize;
 
 use crate::transit::gtfs::{ServiceDate, ServiceTime};
-use crate::transit::model::{MetaStopId, StopId, TransitInfo, TripId};
+use crate::transit::model::{Float, MetaStopId, StopId, TransitInfo, TripId};
 
 use crate::transit::transit_view::TransitView;
 
@@ -64,7 +64,7 @@ fn init_earliest_trip(transit_view: &TransitView, search: &Search) -> Vec<Vec<Op
     earliest_trip
 }
 
-const WALKING_SPEED_METERS_PER_SECOND: f32 = 0.5;
+const WALKING_SPEED_METERS_PER_SECOND: Float = 0.5;
 const SECONDS_IN_DAY: u32 = 3600 * 24;
 
 fn round(transit_view: &TransitView, search: &mut Search) {

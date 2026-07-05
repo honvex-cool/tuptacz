@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    algo::InteractiveAlgo, graphs::{EdgeView, Graph, VertexView}, routing::{
+    graphs::{EdgeDescriptor, EdgeView, Graph, VertexView},
+    routing::{
         Weight, Weighted,
         ch::Rank,
         dijkstra::{
@@ -9,7 +10,8 @@ use crate::{
             drivers::{Driver, PathTracker},
             policies::{Alternating, BoundReachedSeparately},
         },
-    }, utils::pq::NullTracker,
+    },
+    utils::pq::NullTracker,
 };
 
 pub struct Query<'q, G>
@@ -46,6 +48,10 @@ where
 
     fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
         self.distances[vertex.id] = distance;
+    }
+
+    fn get_predecessor(&self, _vertex: VertexView<V>) -> Option<EdgeDescriptor> {
+        None
     }
 
     fn set_predecessor(&mut self, _edge: EdgeView<V, E>) {}

@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+use sealed::sealed;
+
 pub trait SetIndex<V> {
     fn set_index(&mut self, value: &V, index: Option<usize>);
 
@@ -16,7 +18,7 @@ pub trait GetIndex<V> {
     fn get_index(&self, value: &V) -> Option<usize>;
 }
 
-// This tracker consumes the indices but does not remember them
+// This tracker consumes the indices but does not remember them, effectively allowing for duplicates
 #[derive(Default)]
 pub struct NullTracker;
 
@@ -50,12 +52,14 @@ where
     }
 }
 
+#[sealed]
 pub trait KeyOrder<K> {
     fn is_better(a: &K, b: &K) -> bool;
 }
 
 pub struct Min;
 
+#[sealed]
 impl<K> KeyOrder<K> for Min
 where
     K: Ord,
@@ -67,6 +71,7 @@ where
 
 pub struct Max;
 
+#[sealed]
 impl<K> KeyOrder<K> for Max
 where
     K: Ord,

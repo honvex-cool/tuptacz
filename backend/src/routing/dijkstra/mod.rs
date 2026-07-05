@@ -1,12 +1,15 @@
+pub mod algos;
 pub mod drivers;
 pub mod policies;
 
-use crate::algo::{EventClient, InteractiveAlgo};
-use crate::graphs::{EdgeView, Graph, VertexId, VertexView};
-use crate::presentation::{GraphEvent, HighlightMode, ServerAction};
+use num_traits::Zero;
+
+use crate::graphs::{EdgeView, Graph, VertexId};
 use crate::routing::dijkstra::drivers::{Driver, PathTracker};
 use crate::routing::dijkstra::policies::{Direction, DirectionPolicy, TerminationPolicy};
+use crate::routing::presentation::{GraphAction, GraphEvent, HighlightMode};
 use crate::routing::{Weight, Weighted};
+use crate::utils::algo::{EventClient, InteractiveAlgo};
 use crate::utils::pq::{self, GetIndex, Pq, SetIndex};
 
 pub struct BidirectionalDrivenDijkstra<'g, G, D, H, DP, TP, T>
@@ -17,25 +20,119 @@ where
 {
     graph: &'g G,
     bound: <G::E as Weighted>::Weight,
-    forward: Controller<'g, G::V, G::E, D, H, T>,
-    backward: Option<Controller<'g, G::V, G::E, D, H, T>>,
+    meeting_vertex: Option<VertexId>,
+    forward: Controller<G::V, G::E, D, H, T>,
+    backward: Option<Controller<G::V, G::E, D, H, T>>,
     direction_policy: DP,
     termination_policy: TP,
 }
 
 pub type Queue<D, T> = Pq<VertexId, D, pq::Min, T>;
 
-pub struct Controller<'g, V, E, D, H, T>
+pub struct Controller<V, E, D, H, T>
 where
     D: PathTracker<V, E>,
 {
-    pub vertex: VertexView<'g, V>,
-    pub driver: &'g mut D,
+    pub search: Search<D>,
     pub heuristic: H,
     pub queue: Queue<D::Distance, T>,
 }
 
-impl<'g, G, D, H, DP, TP, T, C> InteractiveAlgo<C>
+pub struct Search<D> {
+    pub id: VertexId,
+    pub driver: D,
+}
+
+pub struct SearchResult<W, D> {
+    pub forward: Search<D>,
+    pub backward: Option<Search<D>>,
+    pub bound: W,
+    pub meeting_vertex: Option<VertexId>,
+}
+
+impl<'g, G, D, H, DP, TP, T> BidirectionalDrivenDijkstra<'g, G, D, H, DP, TP, T>
+where
+    G: Graph,
+    G::E: Weighted,
+    D: Driver<G::V, G::E>,
+    T: SetIndex<VertexId> + GetIndex<VertexId>,
+{
+    pub fn new<C>(
+        graph: &'g G,
+        mut forward: Controller<G::V, G::E, D, H, T>,
+        mut backward: Option<Controller<G::V, G::E, D, H, T>>,
+        direction_policy: DP,
+        termination_policy: TP,
+        client: &mut C,
+    ) -> Self
+    where
+        C: EventClient<GraphEvent<G::V, G::E>>,
+    {
+        let zero = D::Distance::zero();
+
+        let forward_vertex = graph.get_vertex(forward.search.id);
+        forward.queue.push(forward_vertex.id, zero);
+        forward.search.driver.set_distance(forward_vertex, zero);
+        Self::highlight_source(forward_vertex.id, client);
+
+        if let Some(backward) = backward.as_mut() {
+            let backward_vertex = graph.get_vertex(backward.search.id);
+            backward.queue.push(backward_vertex.id, zero);
+            backward.search.driver.set_distance(backward_vertex, zero);
+        }
+
+        Self {
+            graph,
+            bound: D::Distance::infinity(),
+            meeting_vertex: None,
+            forward,
+            backward,
+            direction_policy,
+            termination_policy,
+        }
+    }
+
+    fn highlight_source<C>(vertex_id: VertexId, client: &mut C)
+    where
+        C: EventClient<GraphEvent<G::V, G::E>>,
+    {
+        client.consume(GraphEvent {
+            action: GraphAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Source,
+            },
+            comment: "Starting from vertex".to_owned(),
+        });
+    }
+
+    fn highlight_visited<C>(vertex_id: VertexId, client: &mut C)
+    where
+        C: EventClient<GraphEvent<G::V, G::E>>,
+    {
+        client.consume(GraphEvent {
+            action: GraphAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Visited,
+            },
+            comment: "Visited vertex".to_owned(),
+        });
+    }
+
+    fn highlight_awaiting<C>(vertex_id: VertexId, client: &mut C)
+    where
+        C: EventClient<GraphEvent<G::V, G::E>>,
+    {
+        client.consume(GraphEvent {
+            action: GraphAction::HighlightVertex {
+                id: vertex_id,
+                mode: HighlightMode::Awaiting,
+            },
+            comment: "Put vertex to queue".to_owned(),
+        });
+    }
+}
+
+impl<'g, G, D, H, DP, TP, T, C> InteractiveAlgo<C, GraphEvent<G::V, G::E>>
     for BidirectionalDrivenDijkstra<'g, G, D, H, DP, TP, T>
 where
     G: Graph,
@@ -46,40 +143,7 @@ where
     TP: TerminationPolicy<G::V, D::Distance>,
     T: SetIndex<VertexId> + GetIndex<VertexId>,
 {
-    type Input = (
-        &'g G,
-        Controller<'g, G::V, G::E, D, H, T>,
-        Option<Controller<'g, G::V, G::E, D, H, T>>,
-        DP,
-        TP,
-    );
-    type Event = GraphEvent<G::V, G::E>;
-    type Result = D::Distance;
-
-    fn init(
-        (graph, mut forward, mut backward, direction_policy, termination_policy): Self::Input,
-        client: &mut C,
-    ) -> Self {
-        let zero = D::Distance::zero();
-
-        forward.queue.push(forward.vertex.id, zero);
-        forward.driver.set_distance(forward.vertex, zero);
-        Self::highlight_source(forward.vertex.id, client);
-
-        if let Some(backward) = backward.as_mut() {
-            backward.queue.push(backward.vertex.id, zero);
-            backward.driver.set_distance(backward.vertex, zero);
-        }
-
-        Self {
-            graph,
-            bound: D::Distance::infinity(),
-            forward,
-            backward,
-            direction_policy,
-            termination_policy,
-        }
-    }
+    type Result = SearchResult<D::Distance, D>;
 
     fn step(&mut self, client: &mut C) -> bool {
         let direction = if let Some(backward) = self.backward.as_ref() {
@@ -117,13 +181,13 @@ where
 
         let vertex = self.graph.get_vertex(id);
 
-        if total_distance != controller.driver.get_distance(vertex) {
+        if total_distance != controller.search.driver.get_distance(vertex) {
             return true;
         }
 
         Self::highlight_visited(id, client);
 
-        if !controller.driver.visit(vertex) {
+        if !controller.search.driver.visit(vertex) {
             return false;
         }
 
@@ -133,8 +197,9 @@ where
                 edge,
                 total_distance,
                 &mut self.bound,
+                &mut self.meeting_vertex,
                 controller,
-                other_controller.map(|c| c.driver.get_distance(edge.end)),
+                other_controller.map(|c| c.search.driver.get_distance(edge.end)),
                 client,
             )
         };
@@ -148,7 +213,21 @@ where
     }
 
     fn result(self) -> Self::Result {
-        self.bound
+        SearchResult {
+            forward: self.forward.search,
+            backward: self.backward.map(|backward| backward.search),
+            bound: self.bound,
+            meeting_vertex: self.meeting_vertex,
+        }
+    }
+
+    fn result_dyn(self: Box<Self>) -> Self::Result {
+        SearchResult {
+            forward: self.forward.search,
+            backward: self.backward.map(|backward| backward.search),
+            bound: self.bound,
+            meeting_vertex: self.meeting_vertex,
+        }
     }
 }
 
@@ -164,6 +243,7 @@ where
         original_edge: EdgeView<G::V, G::E>,
         total_distance: D::Distance,
         bound: &mut D::Distance,
+        meeting_vertex: &mut Option<VertexId>,
         controller: &mut Controller<G::V, G::E, D, H, T>,
         remaining_distance: Option<D::Distance>,
         client: &mut C,
@@ -176,24 +256,28 @@ where
             Direction::Backward => original_edge.flip(),
         };
 
-        if !controller.driver.should_consider_edge(edge) {
+        if !controller.search.driver.should_consider_edge(edge) {
             return;
         }
 
         let neighbor = edge.end;
-        let neighbor_distance = controller.driver.get_distance(neighbor);
+        let neighbor_distance = controller.search.driver.get_distance(neighbor);
 
         let edge_weight = edge.weight();
         let new_total_distance = total_distance + edge_weight;
 
         if new_total_distance < neighbor_distance
             && controller
+                .search
                 .driver
                 .should_consider_vertex(neighbor, new_total_distance)
         {
-            controller.driver.set_distance(neighbor, new_total_distance);
+            controller
+                .search
+                .driver
+                .set_distance(neighbor, new_total_distance);
 
-            controller.driver.set_predecessor(original_edge);
+            controller.search.driver.set_predecessor(original_edge);
 
             controller
                 .queue
@@ -203,55 +287,11 @@ where
         }
 
         if let Some(remaining_distance) = remaining_distance {
-            let candidate_bound =
-                controller.driver.get_distance(edge.start) + edge_weight + remaining_distance;
+            let candidate_bound = controller.search.driver.get_distance(edge.start)
+                + edge_weight
+                + remaining_distance;
             *bound = D::Distance::min(*bound, candidate_bound);
+            *meeting_vertex = Some(edge.end.id);
         }
-    }
-}
-
-impl<'g, G, D, H, DP, TP, T> BidirectionalDrivenDijkstra<'g, G, D, H, DP, TP, T>
-where
-    G: Graph,
-    G::E: Weighted,
-    D: Driver<G::V, G::E>,
-{
-    fn highlight_source<C>(vertex_id: VertexId, client: &mut C)
-    where
-        C: EventClient<GraphEvent<G::V, G::E>>,
-    {
-        client.consume(GraphEvent {
-            action: ServerAction::HighlightVertex {
-                id: vertex_id,
-                mode: HighlightMode::Source,
-            },
-            comment: "Starting from vertex".to_owned(),
-        });
-    }
-
-    fn highlight_visited<C>(vertex_id: VertexId, client: &mut C)
-    where
-        C: EventClient<GraphEvent<G::V, G::E>>,
-    {
-        client.consume(GraphEvent {
-            action: ServerAction::HighlightVertex {
-                id: vertex_id,
-                mode: HighlightMode::Visited,
-            },
-            comment: "Visited vertex".to_owned(),
-        });
-    }
-
-    fn highlight_awaiting<C>(vertex_id: VertexId, client: &mut C)
-    where
-        C: EventClient<GraphEvent<G::V, G::E>>,
-    {
-        client.consume(GraphEvent {
-            action: ServerAction::HighlightVertex {
-                id: vertex_id,
-                mode: HighlightMode::Awaiting,
-            },
-            comment: "Put vertex to queue".to_owned(),
-        });
     }
 }

@@ -1,32 +1,108 @@
+use std::cell::Cell;
 use std::marker::PhantomData;
 
-use crate::graphs::{EdgeView, VertexId, VertexView};
+use crate::graphs::{EdgeDescriptor, EdgeView, VertexView};
 use crate::routing::{Weight, Weighted};
+use crate::utils::staged::Staged;
+
+pub trait VertexTracker<V, E> {
+    type Distance: Weight;
+
+    fn get_distance(&self) -> Self::Distance;
+    fn set_distance(&mut self, distance: Self::Distance);
+
+    fn get_predecessor(&self) -> Option<EdgeDescriptor>;
+    fn set_predecessor(&mut self, edge: EdgeView<V, E>);
+}
+
+impl<V, E> VertexTracker<V, E> for (E::Weight, Option<EdgeDescriptor>)
+where
+    E: Weighted,
+{
+    type Distance = E::Weight;
+
+    #[inline(always)]
+    fn get_distance(&self) -> Self::Distance {
+        self.0
+    }
+
+    #[inline(always)]
+    fn set_distance(&mut self, distance: Self::Distance) {
+        self.0 = distance;
+    }
+
+    #[inline(always)]
+    fn get_predecessor(&self) -> Option<EdgeDescriptor> {
+        self.1
+    }
+
+    #[inline(always)]
+    fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
+        self.1 = Some(edge.descriptor());
+    }
+}
+
+impl<V, E, T> VertexTracker<V, E> for Cell<T>
+where
+    T: VertexTracker<V, E> + Copy,
+{
+    type Distance = T::Distance;
+
+    #[inline(always)]
+    fn get_distance(&self) -> Self::Distance {
+        self.get().get_distance()
+    }
+
+    #[inline(always)]
+    fn set_distance(&mut self, distance: Self::Distance) {
+        self.get_mut().set_distance(distance);
+    }
+
+    #[inline(always)]
+    fn get_predecessor(&self) -> Option<EdgeDescriptor> {
+        self.get().get_predecessor()
+    }
+
+    #[inline(always)]
+    fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
+        self.get_mut().set_predecessor(edge);
+    }
+}
 
 pub trait PathTracker<V, E> {
     type Distance: Weight;
 
     fn get_distance(&self, vertex: VertexView<V>) -> Self::Distance;
     fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance);
+
+    fn get_predecessor(&self, vertex: VertexView<V>) -> Option<EdgeDescriptor>;
     fn set_predecessor(&mut self, edge: EdgeView<V, E>);
 }
 
-impl<V, E, W> PathTracker<V, E> for Vec<(W, VertexId)>
+impl<V, E, T> PathTracker<V, E> for [T]
 where
-    W: Copy + Weight,
+    T: VertexTracker<V, E>,
 {
-    type Distance = W;
+    type Distance = T::Distance;
 
+    #[inline(always)]
     fn get_distance(&self, vertex: VertexView<V>) -> Self::Distance {
-        self[vertex.id].0
+        self[vertex.id].get_distance()
     }
 
+    #[inline(always)]
     fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
-        self[vertex.id].0 = distance;
+        self[vertex.id].set_distance(distance);
     }
 
+    #[inline(always)]
+    fn get_predecessor(&self, vertex: VertexView<V>) -> Option<EdgeDescriptor> {
+        self[vertex.id].get_predecessor()
+    }
+
+    #[inline(always)]
     fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
-        self[edge.end.id].1 = edge.start.id;
+        self[edge.end.id].set_predecessor(edge);
     }
 }
 
@@ -50,6 +126,51 @@ where
     }
 }
 
+impl<V, E, T> Driver<V, E> for [T]
+where
+    E: Weighted,
+    [T]: PathTracker<V, E, Distance = E::Weight>,
+{
+}
+
+impl<'a, V, E, T> PathTracker<V, E> for Staged<'a, T>
+where
+    T: VertexTracker<V, E> + Copy,
+{
+    type Distance = T::Distance;
+
+    #[inline(always)]
+    fn get_distance(&self, vertex: VertexView<V>) -> Self::Distance {
+        self.get(vertex.id).get_distance()
+    }
+
+    #[inline(always)]
+    fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
+        let mut inner = self.get(vertex.id);
+        inner.set_distance(distance);
+        self.set(vertex.id, inner);
+    }
+
+    #[inline(always)]
+    fn get_predecessor(&self, vertex: VertexView<V>) -> Option<EdgeDescriptor> {
+        self.get(vertex.id).get_predecessor()
+    }
+
+    #[inline(always)]
+    fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
+        let mut inner = self.get(edge.end.id);
+        inner.set_predecessor(edge);
+        self.set(edge.end.id, inner);
+    }
+}
+
+impl<'a, V, E, T> Driver<V, E> for Staged<'a, T>
+where
+    E: Weighted,
+    Staged<'a, T>: PathTracker<V, E, Distance = E::Weight>,
+{
+}
+
 #[macro_export]
 macro_rules! delegate_distance_tracking {
     ($type:ident<$vertex_generic:ident, $edge_generic:ident, $inner_generic:ident $(, $generic:ident)*>, $inner:ident) => {
@@ -67,6 +188,11 @@ macro_rules! delegate_distance_tracking {
             #[inline(always)]
             fn set_distance(&mut self, vertex: VertexView<$vertex_generic>, distance: Self::Distance) {
                 self.$inner.set_distance(vertex, distance);
+            }
+
+            #[inline(always)]
+            fn get_predecessor(&self, vertex: VertexView<$vertex_generic>) -> Option<EdgeDescriptor> {
+                self.$inner.get_predecessor(vertex)
             }
 
             #[inline(always)]
@@ -154,7 +280,7 @@ where
     #[inline(always)]
     fn is_good(&self, vertex: VertexView<V>) -> bool {
         if self.num_visits == self.limit {
-            self.get_distance(vertex).is_finite()
+            self.get_distance(vertex) != D::Distance::infinity()
         } else {
             self.num_visits < self.limit
         }

@@ -3,27 +3,21 @@ use serde::{Deserialize, Serialize};
 use crate::graphs::{EdgeId, VertexId};
 
 #[derive(Serialize, Deserialize)]
+pub struct GraphEvent<V, E> {
+    pub action: GraphAction<V, E>,
+    pub comment: String,
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum HighlightMode {
     Visited,
     Awaiting,
     Source,
 }
 
-
-#[derive(Serialize, Deserialize)]
-pub struct Edge<E> {
-    pub source: VertexId,
-    pub target: VertexId,
-    pub properties: E
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum ServerAction<V, E> {
-    InitGraph {
-        vertices: Vec<V>,
-        edges: Vec<Edge<E>>,
-    },
+pub enum GraphAction<V, E> {
     HighlightVertex {
         id: VertexId,
         mode: HighlightMode,
@@ -37,20 +31,16 @@ pub enum ServerAction<V, E> {
     },
     AddVertex {
         id: EdgeId,
+        properties: V,
     },
     AddEdge {
         id: EdgeId,
         start_id: VertexId,
         end_id: VertexId,
+        properties: E,
     },
     AddShortcut {
         source: VertexId,
-        target: VertexId
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GraphEvent<V, E> {
-    pub action: ServerAction<V, E>,
-    pub comment: String,
+        target: VertexId,
+    },
 }

@@ -1,11 +1,22 @@
-use crate::graphs::{EdgeId, EdgeView, Graph, VertexId, VertexView};
+use serde::{Deserialize, Serialize};
+
+use crate::graphs::{EdgeDescriptor, EdgeId, EdgeView, Graph, VertexId, VertexView};
 
 use std::ops::{Index, IndexMut};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AdjLists<V, E> {
     next_edge_id: EdgeId,
     vertices: Vec<Vertex<V, E>>,
+}
+
+impl<V, E> AdjLists<V, E> {
+    fn with_vertices(vertices: Vec<Vertex<V, E>>) -> Self {
+        Self {
+            next_edge_id: EdgeId(0),
+            vertices,
+        }
+    }
 }
 
 impl<V, E> AdjLists<V, E>
@@ -14,10 +25,7 @@ where
 {
     pub fn with_size(size: usize) -> Self {
         let vertices = (0..size).map(|_| Vertex::new(V::default())).collect();
-        Self {
-            next_edge_id: EdgeId(0),
-            vertices,
-        }
+        Self::with_vertices(vertices)
     }
 }
 
@@ -39,9 +47,19 @@ impl<V, E> Graph for AdjLists<V, E> {
     type V = V;
     type E = E;
 
+    fn with_estimates(num_vertices: usize, _num_edges: usize) -> Self {
+        let vertices = Vec::with_capacity(num_vertices);
+        Self::with_vertices(vertices)
+    }
+
     #[inline(always)]
     fn num_vertices(&self) -> usize {
         self.vertices.len()
+    }
+
+    #[inline(always)]
+    fn num_edges(&self) -> usize {
+        self.next_edge_id.0
     }
 
     #[inline(always)]
@@ -50,6 +68,13 @@ impl<V, E> Graph for AdjLists<V, E> {
             id,
             props: &self.vertices[id].props,
         }
+    }
+
+    #[inline(always)]
+    fn get_edge(&self, descriptor: EdgeDescriptor) -> EdgeView<'_, Self::V, Self::E> {
+        let host_id = descriptor.host_id;
+        let edge = &self.vertices[host_id].outgoing_edges[descriptor.index_within_host];
+        edge.view_in(descriptor.host_id, descriptor.index_within_host, self)
     }
 
     fn add_vertex(&mut self, props: Self::V) -> VertexId {
@@ -110,7 +135,7 @@ impl<V, E> Graph for AdjLists<V, E> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Vertex<V, E> {
     props: V,
     outgoing_edges: Vec<Edge<E>>,
@@ -118,6 +143,7 @@ struct Vertex<V, E> {
 }
 
 impl<V, E> Vertex<V, E> {
+    #[inline(always)]
     fn new(props: V) -> Self {
         Self {
             props,
@@ -127,7 +153,7 @@ impl<V, E> Vertex<V, E> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Edge<E> {
     pub id: EdgeId,
     pub end_id: VertexId,
@@ -139,7 +165,7 @@ impl<E> Edge<E> {
     fn view_in<'g, G>(
         &'g self,
         start_id: VertexId,
-        index_within_vertex: usize,
+        index_within_host: usize,
         graph: &'g G,
     ) -> EdgeView<'g, G::V, E>
     where
@@ -149,7 +175,8 @@ impl<E> Edge<E> {
             id: self.id,
             start: graph.get_vertex(start_id),
             end: graph.get_vertex(self.end_id),
-            index_within_vertex,
+            index_within_host,
+            is_virtual: false,
             props: &self.props,
         }
     }

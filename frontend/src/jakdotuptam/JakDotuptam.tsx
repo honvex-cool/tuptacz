@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
-import { apiGet, apiPost } from "../core/ws"
+import { apiGet, apiPost } from "../core/api"
+import "../core/Common.css"
 import "./JakDotuptam.css"
 
-import { MapContainer, Polyline, TileLayer, Marker, Tooltip, Circle, CircleMarker, Popup } from 'react-leaflet'
+import { MapContainer, Polyline, TileLayer, Marker, Tooltip, CircleMarker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 
 import { journeyArrivalTime, journeyDepartureTime, type Journey, type JourneyLeg, type JourneyStop, type RouteType, type Shape, type Stop, type Trip } from "./model"
@@ -274,7 +275,7 @@ export default function JakDotuptam() {
             .then(journeys => { setJourneys(journeys) })
     }
 
-    return <div id="jakdotuptam-container">
+    return <div className="container">
         <div className="route-search">
             <Select options={stops.map(stop => {
                 return {

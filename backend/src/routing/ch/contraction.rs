@@ -1,19 +1,22 @@
 use std::{cell::Cell, cmp::Ordering};
 
 use crate::{
-    algo::{self, EventClient, InteractiveAlgo, NullClient},
-    graphs::{EdgeView, Graph, VertexId, VertexView},
-    presentation::GraphEvent,
+    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView},
     routing::{
         Weight, Weighted,
-        ch::{EdgeBreakdown, Rank},
+        ch::{Rank, ShortcutBreakdown},
         dijkstra::{
-            self, BidirectionalDrivenDijkstra, Controller,
+            self, BidirectionalDrivenDijkstra, Controller, Search,
             drivers::{Driver, LimitedDistanceDriver, PathTracker},
-            policies::{AlwaysForward, NeverEarly, TerminationPolicy},
+            policies::{AlwaysForward, NeverEarly},
         },
+        presentation::GraphEvent,
     },
-    utils::pq::{self, NullTracker, Pq},
+    utils::{
+        algo::{self, EventClient, InteractiveAlgo, NullClient},
+        pq::{self, NullTracker, Pq},
+        staged::{Epoch, STARTING_EPOCH},
+    },
 };
 
 pub type Priority = f64;
@@ -26,7 +29,7 @@ where
     start_id: VertexId,
     end_id: VertexId,
     weight: <G::E as Weighted>::Weight,
-    edge_breakdown: EdgeBreakdown,
+    breakdown: ShortcutBreakdown,
 }
 
 pub struct Config {
@@ -50,18 +53,13 @@ where
     total_num_contractions: usize,
 }
 
-impl<G, C> InteractiveAlgo<C> for Contraction<G>
+impl<G> Contraction<G>
 where
     G: Graph,
     G::E: Weighted,
-    C: EventClient<GraphEvent<G::V, G::E>>,
 {
-    type Input = (G, Config);
-    type Event = GraphEvent<G::V, G::E>;
-    type Result = (G, Vec<Rank>);
-
     #[inline(always)]
-    fn init((graph, config): Self::Input, _client: &mut C) -> Self {
+    fn new(graph: G, config: Config) -> Self {
         let num_vertices = graph.num_vertices();
 
         let mut algo = Self {
@@ -78,6 +76,15 @@ where
 
         algo
     }
+}
+
+impl<G, C> InteractiveAlgo<C, GraphEvent<G::V, G::E>> for Contraction<G>
+where
+    G: Graph,
+    G::E: Weighted,
+    C: EventClient<GraphEvent<G::V, G::E>>,
+{
+    type Result = (G, Vec<Rank>);
 
     #[inline(always)]
     fn step(&mut self, _client: &mut C) -> bool {
@@ -98,6 +105,10 @@ where
     }
 
     fn result(self) -> Self::Result {
+        (self.graph, self.state.ranks)
+    }
+
+    fn result_dyn(self: Box<Self>) -> Self::Result {
         (self.graph, self.state.ranks)
     }
 }
@@ -203,44 +214,43 @@ where
                 &state.time_stamps,
                 &state.ranks,
             );
-            let mut driver = LimitedDistanceDriver::new(distance_bound, driver);
 
-            let forward_controller = Controller {
-                vertex: incoming_edge.start,
-                driver: &mut driver,
+            let driver = LimitedDistanceDriver::new(distance_bound, driver);
+
+            let search = Search {
+                id: incoming_edge.start.id,
+                driver,
+            };
+            let forward = Controller {
+                search,
                 heuristic: (),
                 queue: dijkstra::Queue::with_index_tracker(NullTracker),
             };
-            let backward_controller = None;
+            let backward = None;
 
             let direction_policy = AlwaysForward;
             let termination_policy = NeverEarly;
 
-            let input = (
+            let mut client = NullClient::default();
+            let mut dijkstra = BidirectionalDrivenDijkstra::new(
                 graph,
-                forward_controller,
-                backward_controller,
+                forward,
+                backward,
                 direction_policy,
                 termination_policy,
+                &mut client,
             );
-
-            algo::run_to_completion::<BidirectionalDrivenDijkstra<_, _, _, _, _, _>, NullClient>(
-                input,
-                &mut Default::default(),
-            );
+            algo::complete(&mut dijkstra, &mut client);
 
             for outgoing_edge in &outgoing_edges {
                 let distance_through_contracted = incoming_weight + outgoing_edge.weight();
-                if driver.get_distance(outgoing_edge.end) > distance_through_contracted {
-                    let edge_breakdown = EdgeBreakdown {
-                        index_within_start: incoming_edge.index_within_vertex,
-                        index_within_middle: outgoing_edge.index_within_vertex,
-                    };
+                if state.distances[outgoing_edge.end.id].get() > distance_through_contracted {
+                    let breakdown = [incoming_edge.descriptor(), outgoing_edge.descriptor()];
                     shortcuts.push(Shortcut {
                         start_id: incoming_edge.start.id,
                         end_id: outgoing_edge.end.id,
                         weight: distance_through_contracted,
-                        edge_breakdown,
+                        breakdown,
                     });
                 }
             }
@@ -369,10 +379,6 @@ fn is_uncontracted(id: VertexId, ranks: &[Rank]) -> bool {
     ranks[id] == Rank::MAX
 }
 
-pub type Epoch = usize;
-
-const STARTING_EPOCH: Epoch = 0;
-
 struct State<G>
 where
     G: Graph,
@@ -476,6 +482,9 @@ where
         self.distances[vertex.id].set(distance);
     }
 
+    fn get_predecessor(&self, _vertex: VertexView<V>) -> Option<EdgeDescriptor> {
+        None
+    }
     fn set_predecessor(&mut self, _edge: EdgeView<V, E>) {}
 }
 
