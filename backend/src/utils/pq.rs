@@ -83,7 +83,7 @@ where
 
 pub struct Pq<V, K, M, T = NullTracker> {
     keys: Vec<K>,
-    values: Vec<V>,
+    pub values: Vec<V>,
     index_tracker: T,
     _phantom: PhantomData<M>,
 }
@@ -127,6 +127,7 @@ where
         self.keys.push(key);
         self.values.push(value);
 
+        self.index_tracker.put_index(&self.values[index], index);
         self.up_heap(index);
     }
 

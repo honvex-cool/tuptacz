@@ -1,6 +1,7 @@
 use crate::{
+    delegate_path_tracking,
     graphs::{
-        EdgeDescriptor, EdgeView, Graph, GraphElements, Path, VertexId, VertexView, repr::AdjLists,
+        EdgeDescriptor, EdgeView, Graph, GraphElements, Path, VertexId, repr::AdjLists,
     },
     routing::{
         self, BasicVertexDataArray, RoutingAlgo, Weighted,
@@ -107,6 +108,8 @@ where
         dyn crate::utils::algo::InteractiveAlgo<C, GraphEvent<G::V, G::E>, Result = Self::Result>
             + 'a,
     > {
+        eprintln!("Querying search {} to {} with {} available shortcuts", source_id, target_id, self.breakdowns.len());
+
         let (forward, backward) = self.vertex_data.stage();
 
         let forward = Search {
@@ -166,27 +169,7 @@ where
     E: Weighted,
     (E::Weight, Option<EdgeDescriptor>): VertexTracker<V, E, Distance = E::Weight>,
 {
-    type Distance = E::Weight;
-
-    #[inline(always)]
-    fn get_distance(&self, vertex: VertexView<V>) -> Self::Distance {
-        self.inner.get_distance(vertex)
-    }
-
-    #[inline(always)]
-    fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
-        self.inner.set_distance(vertex, distance);
-    }
-
-    #[inline(always)]
-    fn get_predecessor(&self, vertex: VertexView<V>) -> Option<EdgeDescriptor> {
-        self.inner.get_predecessor(vertex)
-    }
-
-    #[inline(always)]
-    fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
-        self.inner.set_predecessor(edge);
-    }
+    delegate_path_tracking!(V, E, E::Weight, inner);
 }
 
 impl<'r, V, E> Driver<V, E> for RankBasedDriver<'r, E::Weight>

@@ -18,7 +18,20 @@ where
     let graph_path_buf = directory_path.join("graph.bin");
     let graph_path = graph_path_buf.as_path();
 
-    load_graph_elements(osm_path, graph_path).map(RoutingNetwork::new)
+    let polygon_path_buf = directory_path.join("polygon.json");
+    let polygon_path = polygon_path_buf.as_path();
+
+    let graph_elements = load_graph_elements(osm_path, graph_path)?;
+
+    let polygon = {
+        let file = File::open(polygon_path)?;
+        let mut reader = BufReader::new(file);
+        serde_json::from_reader(&mut reader)?
+    };
+
+    let routing_network = RoutingNetwork::new(graph_elements, polygon);
+
+    Ok(routing_network)
 }
 
 pub fn load_graph_elements<PO, PG>(

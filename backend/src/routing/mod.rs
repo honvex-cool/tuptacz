@@ -6,7 +6,10 @@ pub mod osm;
 pub mod pathfinding;
 pub mod presentation;
 
-use std::{cell::Cell, fmt::{Debug, Display}, ops::Add};
+use std::{
+    fmt::{Debug, Display},
+    ops::Add,
+};
 
 use num_traits::{Float, Zero};
 
@@ -15,7 +18,7 @@ use crate::{
     routing::presentation::GraphEvent,
     utils::{
         algo::{EventClient, InteractiveAlgo, QueryEngine},
-        staged::{Epoch, STARTING_EPOCH, Staged},
+        staged::{Stageable, Staged},
     },
 };
 
@@ -66,23 +69,22 @@ where
         false
     }
 
+    #[inline(always)]
     fn result(self) -> Self::Result {
         self.0
     }
 
+    #[inline(always)]
     fn result_dyn(self: Box<Self>) -> Self::Result {
-        self.0
+        self.result()
     }
 }
 
 type BasicVertexData<W> = (W, Option<EdgeDescriptor>);
 
 pub struct BasicVertexDataArray<W> {
-    epoch: Epoch,
-    forward_time_stamps: Vec<Cell<Epoch>>,
-    backward_time_stamps: Vec<Cell<Epoch>>,
-    forward_data: Vec<Cell<BasicVertexData<W>>>,
-    backward_data: Vec<Cell<BasicVertexData<W>>>,
+    forward: Stageable<BasicVertexData<W>>,
+    backward: Stageable<BasicVertexData<W>>,
 }
 
 impl<W> BasicVertexDataArray<W>
@@ -92,11 +94,8 @@ where
     pub fn with_size(num_vertices: usize) -> Self {
         let default = Self::default();
         Self {
-            epoch: STARTING_EPOCH,
-            forward_time_stamps: vec![Cell::new(STARTING_EPOCH); num_vertices],
-            backward_time_stamps: vec![Cell::new(STARTING_EPOCH); num_vertices],
-            forward_data: vec![Cell::new(default); num_vertices],
-            backward_data: vec![Cell::new(default); num_vertices],
+            forward: Stageable::new_with_default(num_vertices, default),
+            backward: Stageable::new_with_default(num_vertices, default),
         }
     }
 
@@ -106,24 +105,7 @@ where
         Staged<'_, BasicVertexData<W>>,
         Staged<'_, BasicVertexData<W>>,
     ) {
-        self.epoch += 1;
-
-        let default = Self::default();
-
-        let forward_staged = Staged::new_with_default(
-            self.epoch,
-            &self.forward_time_stamps,
-            &mut self.forward_data,
-            default,
-        );
-        let backward_staged = Staged::new_with_default(
-            self.epoch,
-            &self.backward_time_stamps,
-            &mut self.backward_data,
-            default,
-        );
-
-        (forward_staged, backward_staged)
+        (self.forward.stage(), self.backward.stage())
     }
 
     fn default() -> BasicVertexData<W> {

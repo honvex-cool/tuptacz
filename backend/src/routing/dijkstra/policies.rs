@@ -3,7 +3,7 @@ use crate::{
     routing::Weight,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Forward,
     Backward,
