@@ -1,8 +1,7 @@
-use std::io;
+use std::{io, path::Path};
 
 use crate::{
-    routing::{model::RoutingInfo, osm},
-    transit::model::TransitInfo,
+    routing::{model::RoutingInfo, osm}, transit::{gtfs::load_gtfs, model::TransitInfo},
 };
 
 pub fn load_routing_info() -> io::Result<RoutingInfo> {
@@ -18,14 +17,14 @@ pub fn load_routing_info() -> io::Result<RoutingInfo> {
 }
 
 pub fn load_transit_info() -> io::Result<TransitInfo> {
-    // let gtfs_t = load_gtfs(Path::new("gtfs/KRK/T"));
-    // let gtfs_a = load_gtfs(Path::new("gtfs/KRK/A"));
-    // let gtfs_m = load_gtfs(Path::new("gtfs/KRK/M"));
+    let gtfs_t = load_gtfs(Path::new("gtfs/KRK/T"));
+    let gtfs_a = load_gtfs(Path::new("gtfs/KRK/A"));
+    let gtfs_m = load_gtfs(Path::new("gtfs/KRK/M"));
 
-    let mut _transit_info = TransitInfo::new();
-    // transit_info.add_gtfs(&gtfs_t);
-    // transit_info.add_gtfs(&gtfs_a);
-    // transit_info.add_gtfs(&gtfs_m);
+    let mut transit_info = TransitInfo::new();
+    transit_info.add_gtfs(&gtfs_t);
+    transit_info.add_gtfs(&gtfs_a);
+    transit_info.add_gtfs(&gtfs_m);
 
-    Ok(_transit_info)
+    Ok(transit_info)
 }

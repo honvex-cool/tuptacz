@@ -88,10 +88,10 @@ where
 
         eprintln!("Collecting vertices");
 
-        let vertices = node_ids_to_vertices
-            .into_values()
-            .map(|value| value.1)
-            .collect();
+        let mut vertices: Vec<_> = node_ids_to_vertices.into_values().collect();
+        vertices.sort_by_key(|(id, _)| *id);
+
+        let vertices = vertices.into_iter().map(|(_, lat_lng)| lat_lng).collect();
 
         eprintln!("Preparing convenient graph file");
 
@@ -119,16 +119,26 @@ fn get_lat_lng(coord: &geo_types::Coord) -> LatLng {
 fn get_edge(
     node_ids_to_vertices: &HashMap<osm4routing::NodeId, (VertexId, LatLng)>,
     edge: osm4routing::Edge,
-) -> (VertexId, VertexId, Road) {
+) -> (VertexId, VertexId, Road, bool) {
     let start_id = node_ids_to_vertices.get(&edge.source).unwrap().0;
     let end_id = node_ids_to_vertices.get(&edge.target).unwrap().0;
 
     let points: Vec<_> = edge.geometry.iter().map(get_lat_lng).collect();
     let length = LatLng::poly_distance_meters(&points);
 
-    let road = Road { points, length };
+    let mut road = Road { points, length };
 
-    (start_id, end_id, road)
+    if !is_car_accessible(edge.properties.car_forward) {
+        road.points.reverse();
+        (end_id, start_id, road, false)
+    } else {
+        (
+            start_id,
+            end_id,
+            road,
+            is_car_accessible(edge.properties.car_backward),
+        )
+    }
 }
 
 fn is_relevant_edge(edge: &osm4routing::Edge) -> bool {

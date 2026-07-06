@@ -12,7 +12,7 @@ use crate::{
 pub type Float = OrderedFloat<f64>;
 pub type LatLng = crate::utils::geo::LatLng<Float>;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Road {
     pub points: Vec<LatLng>,
     pub length: Float,

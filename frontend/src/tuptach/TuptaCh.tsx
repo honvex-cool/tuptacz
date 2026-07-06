@@ -1,7 +1,7 @@
 import "../core/Common.css";
 import "./TuptaCh.css";
 import { DeckOverlay } from "@deck.gl-community/leaflet";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { useMap, MapContainer, TileLayer, useMapEvents } from "react-leaflet";
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
@@ -11,35 +11,83 @@ import type {
   ControlEvent,
   Edge,
   FrontendEvent,
+  HighlightMode,
+  LatLng,
   ServerEvent,
-  Vertex,
 } from "./presentation";
 import Slider from "@mui/material/Slider";
 import Select from "react-select";
 
 type Phase =
   | "SelectRoutingNetwork"
+  | "RoutingNetworkSelected"
   | "SelectAlgorithm"
+  | "AlgorithmSelected"
   | "Preprocessing"
   | "SelectQuery"
-  | "Query";
+  | "QuerySelected"
+  | "Query"
+  | "QueryDone";
 
 const phaseOrder: Record<Phase, number> = {
   SelectRoutingNetwork: 0,
-  SelectAlgorithm: 1,
-  Preprocessing: 2,
-  SelectQuery: 3,
-  Query: 4,
+  RoutingNetworkSelected: 1,
+  SelectAlgorithm: 2,
+  AlgorithmSelected: 3,
+  Preprocessing: 4,
+  SelectQuery: 5,
+  QuerySelected: 6,
+  Query: 7,
+  QueryDone: 8,
 };
+
+type MapPoint = {
+  id: number;
+  longitude: number;
+  latitude: number;
+  color: [number, number, number];
+  radius: number;
+};
+
+type MapEdge = {
+  id: number;
+  path: [number, number][];
+  color: [number, number, number];
+  width: number;
+};
+
+function highlightColor(mode: HighlightMode): [number, number, number] {
+  switch (mode) {
+    case "Visited":
+      return [255, 80, 80];
+    case "Awaiting":
+      return [0, 120, 255];
+    case "Source":
+      return [0, 255, 0];
+  }
+}
 
 type GraphProps = {
-  vertices: Vertex[];
-  edges: Edge[];
+  mapPoints: Map<number, MapPoint>;
+  mapEdges: Map<number, MapEdge>;
+  path: Edge[] | null;
   phase: Phase;
   onMapClick: (lat: number, lng: number) => void;
+  source: QueryPoint | null;
+  target: QueryPoint | null;
+  pendingPoint: QueryPoint | null;
 };
 
-function GraphComponent({ vertices, edges, phase, onMapClick }: GraphProps) {
+function GraphComponent({
+  mapPoints,
+  mapEdges,
+  path,
+  phase,
+  onMapClick,
+  source,
+  target,
+  pendingPoint,
+}: GraphProps) {
   const map = useMap();
 
   useMapEvents({
@@ -55,38 +103,90 @@ function GraphComponent({ vertices, edges, phase, onMapClick }: GraphProps) {
     map.addLayer(overlay);
     overlay.setProps({
       layers: [
+        new PathLayer({
+          id: "edges",
+          data: Array.from(mapEdges.values()),
+          getPath: (e: MapEdge) => e.path,
+          getColor: (e: MapEdge) => e.color,
+          getWidth: (e: MapEdge) => e.width,
+          widthMinPixels: 1,
+        }),
+        new PathLayer({
+          id: "path",
+          data: path ?? [],
+          getPath: (e: Edge) =>
+            e.props.points.map(
+              (p) => [p.longitude, p.latitude] as [number, number],
+            ),
+          getColor: [255, 0, 0],
+          getWidth: 4,
+          widthMinPixels: 3,
+        }),
         new ScatterplotLayer({
           id: "nodes",
-          data: vertices,
-          getPosition: (v: Vertex) => [v.longitude, v.latitude],
-          getRadius: 2,
-          getFillColor: (_: Vertex) => [255, 0, 0],
+          data: Array.from(mapPoints.values()),
+          getPosition: (p: MapPoint) => [p.longitude, p.latitude],
+          getRadius: (p: MapPoint) => p.radius,
+          getFillColor: (p: MapPoint) => p.color,
+          radiusMinPixels: 4,
+        }),
+        new ScatterplotLayer({
+          id: "source",
+          data: source ? [source] : [],
+          getPosition: (p: QueryPoint) => [
+            p.lat_lng.longitude,
+            p.lat_lng.latitude,
+          ],
+          getRadius: 8,
+          getFillColor: [0, 255, 0],
+          radiusMinPixels: 4,
+        }),
+        new ScatterplotLayer({
+          id: "target",
+          data: target ? [target] : [],
+          getPosition: (p: QueryPoint) => [
+            p.lat_lng.longitude,
+            p.lat_lng.latitude,
+          ],
+          getRadius: 8,
+          getFillColor: [0, 0, 255],
+          radiusMinPixels: 4,
+        }),
+        new ScatterplotLayer({
+          id: "pending",
+          data: pendingPoint ? [pendingPoint] : [],
+          getPosition: (p: QueryPoint) => [
+            p.lat_lng.longitude,
+            p.lat_lng.latitude,
+          ],
+          getRadius: 8,
+          getFillColor: [255, 165, 0],
+          radiusMinPixels: 4,
         }),
       ],
     });
     return () => {
       map.removeLayer(overlay);
     };
-  }, [map, vertices, edges]);
+  }, [map, mapPoints, mapEdges, path, source, target, pendingPoint]);
 
   return null;
 }
 
 function Controls({
-  phase,
   numStepsInProgress,
   requestStep,
   requestRunToCompletion,
 }: {
-  phase: Phase;
   numStepsInProgress: number;
-  send: (msg: FrontendEvent) => void;
   requestStep: () => void;
   requestRunToCompletion: () => void;
 }) {
   const autoplayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [autoplaySpeed, setAutoplaySpeed] = useState<number | null>(null);
+  const [isRunToCompletionRequested, setIsRunToCompletionRequested] =
+    useState<boolean>(false);
 
   function startAutoplay(speed: number) {
     if (autoplayRef.current) clearInterval(autoplayRef.current);
@@ -106,9 +206,6 @@ function Controls({
 
   useEffect(() => () => stopAutoplay(), []);
 
-  if (phase === "SelectRoutingNetwork" || phase === "SelectAlgorithm")
-    return null;
-
   const isAutoplay = autoplaySpeed !== null;
 
   return (
@@ -120,27 +217,33 @@ function Controls({
       >
         Step
       </button>
-      <button
-        className="btn-primary"
-        onClick={() => {
-          if (isAutoplay) {
+      <div>
+        <button
+          className="btn-primary"
+          onClick={() => {
+            if (isAutoplay) {
+              stopAutoplay();
+            } else {
+              startAutoplay(autoplaySpeed ?? 10);
+            }
+          }}
+        >
+          {isAutoplay ? "Manual" : "Autoplay"}
+        </button>
+      </div>
+      <div>
+        <button
+          disabled={isRunToCompletionRequested}
+          className="btn-primary"
+          onClick={() => {
+            setIsRunToCompletionRequested(true);
             stopAutoplay();
-          } else {
-            startAutoplay(autoplaySpeed ?? 10);
-          }
-        }}
-      >
-        {isAutoplay ? "Manual" : "Autoplay"}
-      </button>
-      <button
-        className="btn-primary"
-        onClick={() => {
-          stopAutoplay();
-          requestRunToCompletion();
-        }}
-      >
-        Run to completion
-      </button>
+            requestRunToCompletion();
+          }}
+        >
+          Run to completion
+        </button>
+      </div>
       <label>
         Speed:
         <Slider
@@ -292,10 +395,130 @@ function RoutingNetworkSelector({
   );
 }
 
+type QueryPoint = {
+  id: number;
+  lat_lng: LatLng;
+};
+
+type QuerySelectorProps = {
+  onSubmit: (sourceId: number, targetId: number) => void;
+  source: QueryPoint | null;
+  setSource: (s: QueryPoint | null) => void;
+  target: QueryPoint | null;
+  setTarget: (t: QueryPoint | null) => void;
+  pendingPoint: QueryPoint | null;
+  setPendingPoint: (p: QueryPoint | null) => void;
+  selecting: "source" | "target" | null;
+  setSelecting: (s: "source" | "target" | null) => void;
+};
+
+function QuerySelector({
+  onSubmit,
+  source,
+  setSource,
+  target,
+  setTarget,
+  pendingPoint,
+  setPendingPoint,
+  selecting,
+  setSelecting,
+}: QuerySelectorProps) {
+  function reset() {
+    setSource(null);
+    setTarget(null);
+    setPendingPoint(null);
+    setSelecting(null);
+  }
+
+  function startSelectingSource() {
+    setSelecting("source");
+  }
+
+  function startSelectingTarget() {
+    setSelecting("target");
+  }
+
+  function acceptPending() {
+    if (pendingPoint === null) return;
+    if (selecting === "source") setSource(pendingPoint);
+    else if (selecting === "target") setTarget(pendingPoint);
+    setPendingPoint(null);
+    setSelecting(null);
+  }
+
+  return (
+    <div>
+      <h5>Select Query Points</h5>
+      <div>
+        <button
+          className="btn-primary"
+          onClick={startSelectingSource}
+          disabled={selecting === "source"}
+        >
+          {selecting === "source" ? "Click map for source..." : "Pick Source"}
+        </button>
+        {source !== null && <span> ✓ Source set</span>}
+      </div>
+
+      {selecting === "source" && pendingPoint !== null && (
+        <div>
+          <span>
+            Nearest: ({pendingPoint.lat_lng.latitude.toFixed(4)},{" "}
+            {pendingPoint.lat_lng.longitude.toFixed(4)})
+          </span>
+          <button className="btn-primary" onClick={acceptPending}>
+            Accept
+          </button>
+        </div>
+      )}
+
+      <div>
+        <button
+          className="btn-primary"
+          onClick={startSelectingTarget}
+          disabled={selecting === "target" || source === null}
+        >
+          {selecting === "target" ? "Click map for target..." : "Pick Target"}
+        </button>
+        {target !== null && <span> ✓ Target set</span>}
+      </div>
+
+      {selecting === "target" && pendingPoint !== null && (
+        <div>
+          <span>
+            Nearest: ({pendingPoint.lat_lng.latitude.toFixed(4)},{" "}
+            {pendingPoint.lat_lng.longitude.toFixed(4)})
+          </span>
+          <button className="btn-primary" onClick={acceptPending}>
+            Accept
+          </button>
+        </div>
+      )}
+
+      <div>
+        <button className="btn-primary" onClick={reset}>
+          Reset
+        </button>
+        <button
+          className="btn-primary"
+          disabled={source === null || target === null}
+          onClick={() => {
+            if (source !== null && target !== null) {
+              onSubmit(source.id, target.id);
+            }
+          }}
+        >
+          Submit
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TuptaCh() {
   const websocketProtocol =
     window.location.protocol === "https:" ? "wss:" : "ws:";
-  const websocketAddress = `${websocketProtocol}//localhost:3001/ws`;
+  const websocketAddress = `${websocketProtocol}//${window.location.host}/ws`;
   const ws = useRef<WebSocket | null>(null);
 
   const [availableRoutingNetworkNames, setAvailableRoutingNetworkNames] =
@@ -305,12 +528,35 @@ function TuptaCh() {
     null,
   );
 
-  const [vertices, setVertices] = useState<Vertex[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [selecting, setSelecting] = useState<"source" | "target" | null>(null);
+  const [pendingPoint, setPendingPoint] = useState<QueryPoint | null>(null);
+  const [source, setSource] = useState<QueryPoint | null>(null);
+  const [target, setTarget] = useState<QueryPoint | null>(null);
+
+  const [path, setPath] = useState<Edge[] | null>(null);
+
+  const [mapPoints, setMapPoints] = useState<Map<number, MapPoint>>(new Map());
+  const [mapEdges, setMapEdges] = useState<Map<number, MapEdge>>(new Map());
+  const pendingPointUpdates = useRef<Map<number, MapPoint>>(new Map());
+  const pendingEdgeUpdates = useRef<Map<number, MapEdge>>(new Map());
+  const mapPointsRef = useRef<Map<number, MapPoint>>(new Map());
+  const mapEdgesRef = useRef<Map<number, MapEdge>>(new Map());
+
+  function clear() {
+    setSelecting(null);
+    setPendingPoint(null);
+    setSource(null);
+    setTarget(null);
+    setMapPoints(new Map());
+    setMapEdges(new Map());
+    setPath(null);
+  }
 
   const [phase, setPhase] = useState<Phase>("SelectRoutingNetwork");
 
   const [numStepsInProgress, setNumStepsInProgress] = useState<number>(0);
+
+  const pathLength = path?.reduce((acc, edge) => acc + edge.props.length, 0);
 
   function send(event: FrontendEvent) {
     console.log(`sending ${event.type}`);
@@ -339,53 +585,121 @@ function TuptaCh() {
       if (server_event.type === "Control") {
         const control_event: ControlEvent = server_event.event;
         console.log(`control_event.type ${control_event.type}`);
-        if (control_event.type === "AvailableRoutingNetworks") {
-          setAvailableRoutingNetworkNames(control_event.routing_network_names);
-        } else if (control_event.type === "RoutingNetworkReady") {
-          setPhase("SelectAlgorithm");
-        } else if (control_event.type == "PreprocessingReady") {
-          setPhase("Preprocessing");
-        } else if (control_event.type === "PreprocessingDone") {
-          setPhase("SelectQuery");
-        } else if (control_event.type === "QueryReady") {
-          setPhase("Query");
-        } else if (control_event.type === "QueryDone") {
-          setPhase("SelectQuery");
-        } else if (control_event.type === "ClosestVertexResponse") {
-          if (control_event.name == "source") {
-            console.log("source settled");
-          }
-        } else if (control_event.type === "StepDone") {
-          setNumStepsInProgress((n) => n - 1);
+        switch (control_event.type) {
+          case "AvailableRoutingNetworks":
+            setAvailableRoutingNetworkNames(
+              control_event.routing_network_names,
+            );
+            break;
+          case "RoutingNetworkReady":
+            setPhase("SelectAlgorithm");
+            break;
+          case "PreprocessingReady":
+            setPhase("Preprocessing");
+            break;
+          case "PreprocessingDone":
+            setPhase("SelectQuery");
+            break;
+          case "QueryReady":
+            setPhase("Query");
+            break;
+          case "QueryDone":
+            setPhase("QueryDone");
+            setPath(control_event.path);
+            break;
+          case "ClosestVertexResponse":
+            setPendingPoint(control_event);
+            break;
+          case "StepDone":
+            setNumStepsInProgress((n) => n - 1);
+            console.log(
+              "StepDone, pending points:",
+              pendingPointUpdates.current.size,
+            );
+            if (
+              pendingPointUpdates.current.size > 0 ||
+              pendingEdgeUpdates.current.size > 0
+            ) {
+              setMapPoints((prev) => {
+                const next = new Map(prev);
+                pendingPointUpdates.current.forEach((v, k) => next.set(k, v));
+                pendingPointUpdates.current.clear();
+                mapPointsRef.current = next;
+                return next;
+              });
+              setMapEdges((prev) => {
+                const next = new Map(prev);
+                pendingEdgeUpdates.current.forEach((v, k) => next.set(k, v));
+                pendingEdgeUpdates.current.clear();
+                mapEdgesRef.current = next;
+                return next;
+              });
+            }
+            break;
         }
       } else if (server_event.type === "Algo") {
         const algo_event: AlgoEvent = server_event.event;
-        console.log(algo_event);
+        const action = algo_event.action;
+        console.log(action);
+
+        switch (action.type) {
+          case "HighlightVertex":
+            console.log("adding pending point", action.vertex.id);
+            pendingPointUpdates.current.set(action.vertex.id, {
+              id: action.vertex.id,
+              longitude: action.vertex.props.longitude,
+              latitude: action.vertex.props.latitude,
+              color: highlightColor(action.mode),
+              radius: action.mode === "Source" ? 6 : 13,
+            });
+            console.log("adding", action.vertex.props);
+            break;
+
+          case "HighlightEdge":
+            pendingEdgeUpdates.current.set(action.edge.id, {
+              id: action.edge.id,
+              path: action.edge.props.points.map((p) => [
+                p.longitude,
+                p.latitude,
+              ]),
+              color: highlightColor(action.mode),
+              width: action.mode === "Source" ? 3 : 1,
+            });
+            break;
+        }
       }
     };
     return () => ws.current?.close();
   }, []);
 
   function handleMapClick(latitude: number, longitude: number) {
-    if (phase === "SelectQuery") {
-      const name = "source";
-      const lat_lng = { latitude, longitude };
-      send({ type: "ClosestVertexRequest", name, lat_lng });
+    if (phase === "SelectQuery" && selecting !== null) {
+      let latLng = { latitude, longitude };
+      send({ type: "ClosestVertexRequest", name: selecting, lat_lng: latLng });
     }
   }
 
   function handleRoutingNetworkSelect(newRoutingNetworkName: string) {
     if (newRoutingNetworkName !== routingNetworkName) {
+      clear();
       setRoutingNetworkName(newRoutingNetworkName);
       send({
         type: "SelectRoutingNetwork",
         routing_network_name: newRoutingNetworkName,
       });
+      setPhase("RoutingNetworkSelected");
     }
   }
 
   function handleAlgorithmSelect(algorithmSelection: AlgorithmSelection) {
+    clear();
     send({ type: "SelectAlgorithm", algorithm_selection: algorithmSelection });
+    setPhase("AlgorithmSelected");
+  }
+
+  function handleQuerySelect(sourceId: number, targetId: number) {
+    send({ type: "SelectQuery", source_id: sourceId, target_id: targetId });
+    setPhase("QuerySelected");
   }
 
   return (
@@ -402,17 +716,62 @@ function TuptaCh() {
           <AlgorithmSelector onSelect={handleAlgorithmSelect} />
         )}
 
-        {phaseOrder[phase] >= phaseOrder["Preprocessing"] && (
+        {phase === "Preprocessing" && (
           <>
+            <h5>Control the preprocessing</h5>
             <Controls
-              phase={phase}
-              send={send}
               numStepsInProgress={numStepsInProgress}
               requestStep={requestStep}
               requestRunToCompletion={requestRunToCompletion}
             />
+          </>
+        )}
 
-            <label>Current phase: {phase}</label>
+        {phaseOrder[phase] >= phaseOrder["SelectQuery"] && (
+          <>
+            <h4>Preprocessing is done</h4>
+            {phase === "SelectQuery" && (
+              <QuerySelector
+                onSubmit={handleQuerySelect}
+                source={source}
+                setSource={setSource}
+                target={target}
+                setTarget={setTarget}
+                pendingPoint={pendingPoint}
+                setPendingPoint={setPendingPoint}
+                selecting={selecting}
+                setSelecting={setSelecting}
+              />
+            )}
+            {phase === "Query" && (
+              <>
+                <h5>Control the query</h5>
+                <Controls
+                  numStepsInProgress={numStepsInProgress}
+                  requestStep={requestStep}
+                  requestRunToCompletion={requestRunToCompletion}
+                />
+              </>
+            )}
+            {phase === "QueryDone" && (
+              <div>
+                <h4>Query is done</h4>
+                {path === null ? (
+                  <h5>No path found!</h5>
+                ) : (
+                  <h5>Path found! {(pathLength! / 1000).toFixed(3)} km</h5>
+                )}
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    setPhase("SelectQuery");
+                    clear();
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -428,10 +787,14 @@ function TuptaCh() {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
         <GraphComponent
-          vertices={vertices}
-          edges={edges}
-          phase={phase}
           onMapClick={handleMapClick}
+          mapPoints={mapPoints}
+          mapEdges={mapEdges}
+          path={path}
+          phase={phase}
+          source={source}
+          target={target}
+          pendingPoint={pendingPoint}
         />
       </MapContainer>
     </div>

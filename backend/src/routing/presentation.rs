@@ -1,46 +1,29 @@
 use serde::{Deserialize, Serialize};
 
-use crate::graphs::{EdgeId, VertexId};
+use crate::graphs::{Edge, Vertex};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GraphEvent<V, E> {
     pub action: GraphAction<V, E>,
     pub comment: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum HighlightMode {
     Visited,
     Awaiting,
     Source,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum GraphAction<V, E> {
     HighlightVertex {
-        id: VertexId,
+        vertex: Vertex<V>,
         mode: HighlightMode,
-    },
-    HideVertex {
-        id: VertexId,
     },
     HighlightEdge {
-        id: EdgeId,
+        edge: Edge<V, E>,
         mode: HighlightMode,
-    },
-    AddVertex {
-        id: EdgeId,
-        properties: V,
-    },
-    AddEdge {
-        id: EdgeId,
-        start_id: VertexId,
-        end_id: VertexId,
-        properties: E,
-    },
-    AddShortcut {
-        source: VertexId,
-        target: VertexId,
     },
 }

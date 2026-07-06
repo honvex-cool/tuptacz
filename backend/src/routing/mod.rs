@@ -1,3 +1,4 @@
+pub mod a_star;
 pub mod ch;
 pub mod dijkstra;
 pub mod model;
@@ -5,17 +6,20 @@ pub mod osm;
 pub mod pathfinding;
 pub mod presentation;
 
-use std::{cell::Cell, ops::Add};
+use std::{cell::Cell, fmt::{Debug, Display}, ops::Add};
 
 use num_traits::{Float, Zero};
 
 use crate::{
-    graphs::{EdgeDescriptor, Path, VertexId}, routing::presentation::GraphEvent, utils::{
-        algo::{EventClient, InteractiveAlgo, QueryEngine}, staged::{Epoch, STARTING_EPOCH, Staged},
+    graphs::{EdgeDescriptor, Path, VertexId},
+    routing::presentation::GraphEvent,
+    utils::{
+        algo::{EventClient, InteractiveAlgo, QueryEngine},
+        staged::{Epoch, STARTING_EPOCH, Staged},
     },
 };
 
-pub trait Weight: Copy + Ord + Zero + Add<Output = Self> {
+pub trait Weight: Debug + Display + Copy + Ord + Zero + Add<Output = Self> {
     fn infinity() -> Self;
 }
 
@@ -38,25 +42,25 @@ where
 
 impl<F> Weight for F
 where
-    F: Float + Ord,
+    F: Float + Ord + Debug + Display,
 {
     fn infinity() -> Self {
         <Self as Float>::infinity()
     }
 }
 
-pub type Pathfinder<V, E, C> =
-    dyn QueryEngine<C, GraphEvent<V, E>, Input = (VertexId, VertexId), Result = Option<Path<V, E>>>;
-pub type RoutingAlgo<V, E, C> =
-    dyn InteractiveAlgo<C, GraphEvent<V, E>, Result = Box<Pathfinder<V, E, C>>>;
+pub type Pathfinder<'a, V, E, C> = dyn QueryEngine<C, GraphEvent<V, E>, Input = (VertexId, VertexId), Result = Option<Path<V, E>>>
+    + 'a;
+pub type RoutingAlgo<'a, V, E, C> =
+    dyn InteractiveAlgo<C, GraphEvent<V, E>, Result = Box<Pathfinder<'a, V, E, C>>>;
 
-pub struct NoPreprocessing<Q>(Q);
+pub struct NoPreprocessing<'a, V, E, C>(Box<Pathfinder<'a, V, E, C>>);
 
-impl<Q, C, E> InteractiveAlgo<C, E> for NoPreprocessing<Q>
+impl<'a, V, E, C> InteractiveAlgo<C, GraphEvent<V, E>> for NoPreprocessing<'a, V, E, C>
 where
-    C: EventClient<E>,
+    C: EventClient<GraphEvent<V, E>>,
 {
-    type Result = Q;
+    type Result = Box<Pathfinder<'a, V, E, C>>;
 
     fn step(&mut self, _client: &mut C) -> bool {
         false
@@ -75,7 +79,8 @@ type BasicVertexData<W> = (W, Option<EdgeDescriptor>);
 
 pub struct BasicVertexDataArray<W> {
     epoch: Epoch,
-    time_stamps: Vec<Cell<Epoch>>,
+    forward_time_stamps: Vec<Cell<Epoch>>,
+    backward_time_stamps: Vec<Cell<Epoch>>,
     forward_data: Vec<Cell<BasicVertexData<W>>>,
     backward_data: Vec<Cell<BasicVertexData<W>>>,
 }
@@ -88,7 +93,8 @@ where
         let default = Self::default();
         Self {
             epoch: STARTING_EPOCH,
-            time_stamps: vec![Cell::new(STARTING_EPOCH); num_vertices],
+            forward_time_stamps: vec![Cell::new(STARTING_EPOCH); num_vertices],
+            backward_time_stamps: vec![Cell::new(STARTING_EPOCH); num_vertices],
             forward_data: vec![Cell::new(default); num_vertices],
             backward_data: vec![Cell::new(default); num_vertices],
         }
@@ -106,13 +112,13 @@ where
 
         let forward_staged = Staged::new_with_default(
             self.epoch,
-            &self.time_stamps,
+            &self.forward_time_stamps,
             &mut self.forward_data,
             default,
         );
         let backward_staged = Staged::new_with_default(
             self.epoch,
-            &self.time_stamps,
+            &self.backward_time_stamps,
             &mut self.backward_data,
             default,
         );

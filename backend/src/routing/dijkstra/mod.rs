@@ -1,11 +1,13 @@
 pub mod algos;
 pub mod drivers;
+pub mod heuristics;
 pub mod policies;
 
 use num_traits::Zero;
 
-use crate::graphs::{EdgeView, Graph, VertexId};
+use crate::graphs::{EdgeView, Graph, VertexId, VertexView};
 use crate::routing::dijkstra::drivers::{Driver, PathTracker};
+use crate::routing::dijkstra::heuristics::Heuristic;
 use crate::routing::dijkstra::policies::{Direction, DirectionPolicy, TerminationPolicy};
 use crate::routing::presentation::{GraphAction, GraphEvent, HighlightMode};
 use crate::routing::{Weight, Weighted};
@@ -27,7 +29,7 @@ where
     termination_policy: TP,
 }
 
-pub type Queue<D, T> = Pq<VertexId, D, pq::Min, T>;
+pub type Queue<D, T> = Pq<VertexId, (D, D), pq::Min, T>;
 
 pub struct Controller<V, E, D, H, T>
 where
@@ -47,7 +49,7 @@ pub struct SearchResult<W, D> {
     pub forward: Search<D>,
     pub backward: Option<Search<D>>,
     pub bound: W,
-    pub meeting_vertex: Option<VertexId>,
+    pub meeting_id: Option<VertexId>,
 }
 
 impl<'g, G, D, H, DP, TP, T> BidirectionalDrivenDijkstra<'g, G, D, H, DP, TP, T>
@@ -55,6 +57,7 @@ where
     G: Graph,
     G::E: Weighted,
     D: Driver<G::V, G::E>,
+    H: Heuristic<G::V, D::Distance>,
     T: SetIndex<VertexId> + GetIndex<VertexId>,
 {
     pub fn new<C>(
@@ -71,13 +74,15 @@ where
         let zero = D::Distance::zero();
 
         let forward_vertex = graph.get_vertex(forward.search.id);
-        forward.queue.push(forward_vertex.id, zero);
+        let forward_key = (forward.heuristic.calculate(forward_vertex), zero);
+        forward.queue.push(forward_vertex.id, forward_key);
         forward.search.driver.set_distance(forward_vertex, zero);
-        Self::highlight_source(forward_vertex.id, client);
+        Self::highlight_source(forward_vertex, client);
 
         if let Some(backward) = backward.as_mut() {
             let backward_vertex = graph.get_vertex(backward.search.id);
-            backward.queue.push(backward_vertex.id, zero);
+            let backward_key = (backward.heuristic.calculate(backward_vertex), zero);
+            backward.queue.push(backward_vertex.id, backward_key);
             backward.search.driver.set_distance(backward_vertex, zero);
         }
 
@@ -92,39 +97,39 @@ where
         }
     }
 
-    fn highlight_source<C>(vertex_id: VertexId, client: &mut C)
+    fn highlight_source<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
     {
         client.consume(GraphEvent {
             action: GraphAction::HighlightVertex {
-                id: vertex_id,
+                vertex: vertex.detach(),
                 mode: HighlightMode::Source,
             },
             comment: "Starting from vertex".to_owned(),
         });
     }
 
-    fn highlight_visited<C>(vertex_id: VertexId, client: &mut C)
+    fn highlight_visited<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
     {
         client.consume(GraphEvent {
             action: GraphAction::HighlightVertex {
-                id: vertex_id,
+                vertex: vertex.detach(),
                 mode: HighlightMode::Visited,
             },
             comment: "Visited vertex".to_owned(),
         });
     }
 
-    fn highlight_awaiting<C>(vertex_id: VertexId, client: &mut C)
+    fn highlight_awaiting<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
     {
         client.consume(GraphEvent {
             action: GraphAction::HighlightVertex {
-                id: vertex_id,
+                vertex: vertex.detach(),
                 mode: HighlightMode::Awaiting,
             },
             comment: "Put vertex to queue".to_owned(),
@@ -138,6 +143,7 @@ where
     G: Graph,
     G::E: Weighted,
     D: Driver<G::V, G::E>,
+    H: Heuristic<G::V, D::Distance>,
     C: EventClient<GraphEvent<G::V, G::E>>,
     DP: DirectionPolicy<D::Distance>,
     TP: TerminationPolicy<G::V, D::Distance>,
@@ -148,12 +154,12 @@ where
     fn step(&mut self, client: &mut C) -> bool {
         let direction = if let Some(backward) = self.backward.as_ref() {
             if let (
-                Some((&forward_id, &total_forward_distance)),
-                Some((&backward_id, &total_backward_distance)),
+                Some((&forward_id, &forward_distance)),
+                Some((&backward_id, &backward_distance)),
             ) = (self.forward.queue.peek(), backward.queue.peek())
             {
-                let forward = (self.graph.get_vertex(forward_id), total_forward_distance);
-                let backward = (self.graph.get_vertex(backward_id), total_backward_distance);
+                let forward = (self.graph.get_vertex(forward_id), forward_distance);
+                let backward = (self.graph.get_vertex(backward_id), backward_distance);
 
                 if self
                     .termination_policy
@@ -162,7 +168,7 @@ where
                     return false;
                 }
                 self.direction_policy
-                    .pick_direction(total_forward_distance, total_backward_distance)
+                    .pick_direction(forward_distance.0, backward_distance.0)
             } else {
                 return false;
             }
@@ -177,7 +183,7 @@ where
             Direction::Backward => (self.backward.as_mut().unwrap(), Some(&self.forward)),
         };
 
-        let (id, total_distance) = controller.queue.pop().unwrap();
+        let (id, (_, total_distance)) = controller.queue.pop().unwrap();
 
         let vertex = self.graph.get_vertex(id);
 
@@ -185,13 +191,17 @@ where
             return true;
         }
 
-        Self::highlight_visited(id, client);
+        Self::highlight_visited(vertex, client);
 
         if !controller.search.driver.visit(vertex) {
             return false;
         }
 
-        let handler = |edge| {
+        let handler = |edge: EdgeView<'_, _, _>| {
+            let edge_end = match direction {
+                Direction::Forward => edge.end,
+                Direction::Backward => edge.start,
+            };
             Self::handle_edge(
                 direction,
                 edge,
@@ -199,7 +209,7 @@ where
                 &mut self.bound,
                 &mut self.meeting_vertex,
                 controller,
-                other_controller.map(|c| c.search.driver.get_distance(edge.end)),
+                other_controller.map(|c| c.search.driver.get_distance(edge_end)),
                 client,
             )
         };
@@ -217,7 +227,7 @@ where
             forward: self.forward.search,
             backward: self.backward.map(|backward| backward.search),
             bound: self.bound,
-            meeting_vertex: self.meeting_vertex,
+            meeting_id: self.meeting_vertex,
         }
     }
 
@@ -226,7 +236,7 @@ where
             forward: self.forward.search,
             backward: self.backward.map(|backward| backward.search),
             bound: self.bound,
-            meeting_vertex: self.meeting_vertex,
+            meeting_id: self.meeting_vertex,
         }
     }
 }
@@ -236,6 +246,7 @@ where
     G: Graph,
     G::E: Weighted,
     D: Driver<G::V, G::E>,
+    H: Heuristic<G::V, D::Distance>,
     T: SetIndex<VertexId> + GetIndex<VertexId>,
 {
     fn handle_edge<C>(
@@ -258,7 +269,7 @@ where
 
         if !controller.search.driver.should_consider_edge(edge) {
             return;
-        }
+        };
 
         let neighbor = edge.end;
         let neighbor_distance = controller.search.driver.get_distance(neighbor);
@@ -277,21 +288,23 @@ where
                 .driver
                 .set_distance(neighbor, new_total_distance);
 
-            controller.search.driver.set_predecessor(original_edge);
+            controller.search.driver.set_predecessor(edge);
 
-            controller
-                .queue
-                .push_or_update(neighbor.id, new_total_distance);
+            let estimate = new_total_distance + controller.heuristic.calculate(neighbor);
+            let key = (estimate, new_total_distance);
+            controller.queue.push_or_update(neighbor.id, key);
 
-            Self::highlight_awaiting(neighbor.id, client);
+            Self::highlight_awaiting(neighbor, client);
         }
 
         if let Some(remaining_distance) = remaining_distance {
             let candidate_bound = controller.search.driver.get_distance(edge.start)
                 + edge_weight
                 + remaining_distance;
-            *bound = D::Distance::min(*bound, candidate_bound);
-            *meeting_vertex = Some(edge.end.id);
+            if candidate_bound < *bound {
+                *bound = candidate_bound;
+                *meeting_vertex = Some(edge.end.id);
+            }
         }
     }
 }

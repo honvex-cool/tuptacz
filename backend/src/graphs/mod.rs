@@ -62,7 +62,7 @@ where
     pub fn detach(&self) -> Edge<V, E> {
         Edge {
             start: self.start.detach(),
-            end: self.start.detach(),
+            end: self.end.detach(),
             id: self.id,
             props: self.props.clone(),
         }
@@ -124,13 +124,13 @@ pub struct EdgeDescriptor {
     index_within_host: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Vertex<V> {
     pub id: VertexId,
     pub props: V,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Edge<V, E> {
     pub start: Vertex<V>,
     pub end: Vertex<V>,
@@ -140,13 +140,17 @@ pub struct Edge<V, E> {
 
 pub type Path<V, E> = Vec<Edge<V, E>>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphElements<V, E> {
     pub vertices: Vec<V>,
-    pub edges: Vec<(VertexId, VertexId, E)>,
+    pub edges: Vec<(VertexId, VertexId, E, bool)>,
 }
 
-impl<V, E> GraphElements<V, E> {
+impl<V, E> GraphElements<V, E>
+where
+    V: Clone,
+    E: Clone,
+{
     pub fn to_graph<G>(self) -> G
     where
         G: Graph<V = V, E = E>,
@@ -155,7 +159,10 @@ impl<V, E> GraphElements<V, E> {
         for vertex_props in self.vertices {
             graph.add_vertex(vertex_props);
         }
-        for (start_id, end_id, edge_props) in self.edges {
+        for (start_id, end_id, edge_props, is_bidirectional) in self.edges {
+            if is_bidirectional {
+                graph.add_edge(end_id, start_id, edge_props.clone());
+            }
             graph.add_edge(start_id, end_id, edge_props);
         }
         graph
@@ -164,8 +171,8 @@ impl<V, E> GraphElements<V, E> {
 
 // Contract: VertexId is just an index into a vector
 pub trait Graph {
-    type V;
-    type E;
+    type V: Clone;
+    type E: Clone;
 
     fn with_estimates(num_vertices: usize, num_edges: usize) -> Self;
 

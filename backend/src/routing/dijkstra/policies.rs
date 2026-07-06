@@ -40,8 +40,8 @@ impl<X> DirectionPolicy<X> for Alternating {
 pub trait TerminationPolicy<V, W> {
     fn should_terminate(
         &self,
-        forward: (VertexView<V>, W),
-        backward: (VertexView<V>, W),
+        forward: (VertexView<V>, (W, W)),
+        backward: (VertexView<V>, (W, W)),
         bound: W,
     ) -> bool;
 }
@@ -52,8 +52,8 @@ pub struct NeverEarly;
 impl<V, W> TerminationPolicy<V, W> for NeverEarly {
     fn should_terminate(
         &self,
-        _forward: (VertexView<V>, W),
-        _backward: (VertexView<V>, W),
+        _forward: (VertexView<V>, (W, W)),
+        _backward: (VertexView<V>, (W, W)),
         _bound: W,
     ) -> bool {
         false
@@ -69,8 +69,8 @@ pub struct EndToEnd {
 impl<V, W> TerminationPolicy<V, W> for EndToEnd {
     fn should_terminate(
         &self,
-        (forward_vertex, _): (VertexView<V>, W),
-        (backward_vertex, _): (VertexView<V>, W),
+        (forward_vertex, _): (VertexView<V>, (W, W)),
+        (backward_vertex, _): (VertexView<V>, (W, W)),
         _bound: W,
     ) -> bool {
         forward_vertex.id == self.target_id || backward_vertex.id == self.source_id
@@ -86,11 +86,11 @@ where
 {
     fn should_terminate(
         &self,
-        (_, total_forwad_distance): (VertexView<V>, W),
-        (_, total_backward_distance): (VertexView<V>, W),
+        (_, (_, total_forward_distance)): (VertexView<V>, (W, W)),
+        (_, (_, total_backward_distance)): (VertexView<V>, (W, W)),
         bound: W,
     ) -> bool {
-        total_forwad_distance + total_backward_distance >= bound
+        total_forward_distance + total_backward_distance >= bound
     }
 }
 
@@ -103,10 +103,27 @@ where
 {
     fn should_terminate(
         &self,
-        (_, total_forwad_distance): (VertexView<V>, W),
-        (_, total_backward_distance): (VertexView<V>, W),
+        (_, (_, total_forwad_distance)): (VertexView<V>, (W, W)),
+        (_, (_, total_backward_distance)): (VertexView<V>, (W, W)),
         bound: W,
     ) -> bool {
         total_forwad_distance >= bound && total_backward_distance >= bound
+    }
+}
+
+#[derive(Default)]
+pub struct BoundReachedByEither;
+
+impl<V, W> TerminationPolicy<V, W> for BoundReachedByEither
+where
+    W: Weight,
+{
+    fn should_terminate(
+        &self,
+        (_, (forward_estimate, _)): (VertexView<V>, (W, W)),
+        (_, (backward_estimate, _)): (VertexView<V>, (W, W)),
+        bound: W,
+    ) -> bool {
+        forward_estimate >= bound || backward_estimate >= bound
     }
 }

@@ -32,7 +32,7 @@ where
 
         let theta = hav_theta.sqrt().asin() * two;
 
-        return theta * earth_radius_meters;
+        theta * earth_radius_meters
     }
 
     pub fn poly_distance_meters(lat_lngs: &[Self]) -> F {

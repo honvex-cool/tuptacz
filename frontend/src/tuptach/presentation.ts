@@ -3,15 +3,38 @@ export interface LatLng {
   longitude: number;
 }
 
-export interface Edge {
-  source: number;
-  target: number;
-  properties: LatLng[];
+export interface Vertex {
+  id: number;
+  props: LatLng;
 }
 
-export type Vertex = LatLng;
+export interface Road {
+  points: LatLng[];
+  length: number;
+}
 
-export type GraphAction = string;
+export interface Edge {
+  end: Vertex;
+  start: Vertex;
+  id: number;
+  props: Road;
+}
+
+export type HighlightMode = "Visited" | "Awaiting" | "Source";
+
+export interface HighlightVertex {
+  type: "HighlightVertex";
+  vertex: Vertex;
+  mode: HighlightMode;
+}
+
+export interface HighlightEdge {
+  type: "HighlightEdge";
+  edge: Edge;
+  mode: HighlightMode;
+}
+
+export type GraphAction = HighlightVertex | HighlightEdge;
 
 export interface AlgoEvent {
   action: GraphAction;
@@ -46,6 +69,7 @@ export interface QueryReady {
 
 export interface QueryDone {
   type: "QueryDone";
+  path: Edge[] | null;
 }
 
 export interface StepDone {

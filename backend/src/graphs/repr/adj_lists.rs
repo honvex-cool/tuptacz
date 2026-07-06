@@ -43,7 +43,11 @@ impl<V, E> IndexMut<VertexId> for AdjLists<V, E> {
     }
 }
 
-impl<V, E> Graph for AdjLists<V, E> {
+impl<V, E> Graph for AdjLists<V, E>
+where
+    V: Clone,
+    E: Clone,
+{
     type V = V;
     type E = E;
 

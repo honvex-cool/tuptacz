@@ -12,17 +12,15 @@ pub fn reconstruct_path<G, D>(
 ) -> Option<Path<G::V, G::E>>
 where
     G: Graph,
-    G::V: Clone,
-    G::E: Clone + Weighted,
+    G::E: Weighted,
     D: Driver<G::V, G::E>,
 {
-    let Some(Search { mut id, mut driver }) = result.backward else {
-        return None;
-    };
+    let Search {
+        id: target_id,
+        driver: backward_driver,
+    } = result.backward?;
 
-    let Some(meeting_id) = result.meeting_vertex else {
-        return None;
-    };
+    let meeting_id = result.meeting_id?;
 
     let Search {
         id: source_id,
@@ -31,24 +29,31 @@ where
 
     let mut path = vec![];
 
-    let mut handler = |id, driver: &D| {
+    let handler = |id, path: &mut Path<_, _>, driver: &D, label: &str| {
         let vertex = graph.get_vertex(id);
-        let edge_descriptor = driver.get_predecessor(vertex).unwrap();
+        let edge_descriptor = driver.get_predecessor(vertex).unwrap_or_else(|| {
+            panic!(
+                "no {} predecessor for vertex {} (meeting_id={}, source_id={})",
+                label, id, meeting_id, source_id
+            );
+        });
         let edge = graph.get_edge(edge_descriptor);
 
         path.push(edge.detach());
 
-        edge.start.id
+        edge
     };
 
-    while id != meeting_id {
-        id = handler(id, &driver);
+    let mut id = meeting_id;
+    while id != source_id {
+        id = handler(id, &mut path, &forward_driver, "fwd").start.id;
     }
 
-    driver = forward_driver;
+    path.reverse();
 
-    while id != source_id {
-        id = handler(id, &driver);
+    let mut id = meeting_id;
+    while id != target_id {
+        id = handler(id, &mut path, &backward_driver, "bwd").end.id;
     }
 
     Some(path)

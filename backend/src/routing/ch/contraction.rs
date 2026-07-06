@@ -1,18 +1,11 @@
 use std::{cell::Cell, cmp::Ordering};
 
 use crate::{
-    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView},
-    routing::{
-        Weight, Weighted,
-        ch::{Rank, ShortcutBreakdown},
-        dijkstra::{
-            self, BidirectionalDrivenDijkstra, Controller, Search,
-            drivers::{Driver, LimitedDistanceDriver, PathTracker},
-            policies::{AlwaysForward, NeverEarly},
-        },
-        presentation::GraphEvent,
-    },
-    utils::{
+    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView}, routing::{
+        Weight, Weighted, ch::{Rank, ShortcutBreakdown}, dijkstra::{
+            self, BidirectionalDrivenDijkstra, Controller, Search, drivers::{Driver, LimitedDistanceDriver, PathTracker}, heuristics::ZeroHeuristic, policies::{AlwaysForward, NeverEarly},
+        }, presentation::GraphEvent,
+    }, utils::{
         algo::{self, EventClient, InteractiveAlgo, NullClient},
         pq::{self, NullTracker, Pq},
         staged::{Epoch, STARTING_EPOCH},
@@ -223,7 +216,7 @@ where
             };
             let forward = Controller {
                 search,
-                heuristic: (),
+                heuristic: ZeroHeuristic,
                 queue: dijkstra::Queue::with_index_tracker(NullTracker),
             };
             let backward = None;

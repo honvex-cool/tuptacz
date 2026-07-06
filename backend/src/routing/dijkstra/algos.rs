@@ -1,33 +1,33 @@
 use crate::{
-    graphs::{Graph, GraphElements, Path, VertexId},
-    routing::{BasicVertexDataArray, Weighted, presentation::GraphEvent},
-    utils::algo::{self, EventClient, InteractiveAlgo},
+    graphs::{Graph, GraphElements, Path, VertexId, repr::AdjLists},
+    routing::{
+        BasicVertexDataArray, NoPreprocessing, RoutingAlgo, Weighted,
+        dijkstra::{
+            BidirectionalDrivenDijkstra, Controller, Queue, Search,
+            heuristics::ZeroHeuristic,
+            policies::{Alternating, AlwaysForward, BoundReachedJointly, EndToEnd},
+        },
+        pathfinding::reconstruct_path,
+        presentation::GraphEvent,
+    },
+    utils::{
+        algo::{self, EventClient, InteractiveAlgo, QueryEngine},
+        pq::NullTracker,
+    },
 };
 
-pub struct Dijkstra<V, E> {
-    is_bidirectional: bool,
+pub fn dijkstra<V, E, C>(
     graph_elements: GraphElements<V, E>,
-}
-
-impl<V, E, C> InteractiveAlgo<C, GraphEvent<V, E>> for Dijkstra<V, E>
+    is_bidirectional: bool,
+) -> Box<RoutingAlgo<'static, V, E, C>>
 where
-    V: Clone,
-    E: Clone + Weighted,
-    C: EventClient<GraphEvent<V, E>>,
+    V: Clone + 'static,
+    E: Clone + Weighted + 'static,
+    C: EventClient<GraphEvent<V, E>> + 'static,
 {
-    type Result = Box<crate::routing::Pathfinder<V, E, C>>;
-
-    fn step(&mut self, _client: &mut C) -> bool {
-        todo!()
-    }
-
-    fn result(self) -> Self::Result {
-        todo!()
-    }
-
-    fn result_dyn(self: Box<Self>) -> Self::Result {
-        todo!()
-    }
+    let graph: AdjLists<_, _> = graph_elements.to_graph();
+    let pathfinder = Box::new(Pathfinder::new(graph, is_bidirectional));
+    Box::new(NoPreprocessing(pathfinder))
 }
 
 struct Pathfinder<G>
@@ -55,21 +55,70 @@ where
     }
 }
 
-impl<G, C> algo::QueryEngine<C, GraphEvent<G::V, G::E>> for Pathfinder<G>
+impl<G, C> QueryEngine<C, GraphEvent<G::V, G::E>> for Pathfinder<G>
 where
     G: Graph,
     G::E: Weighted,
-    C: EventClient<GraphEvent<G::V, G::E>>,
+    C: EventClient<GraphEvent<G::V, G::E>> + 'static,
 {
     type Input = (VertexId, VertexId);
 
-    type Result = Path<G::V, G::E>;
+    type Result = Option<Path<G::V, G::E>>;
 
     fn query<'a>(
         &'a mut self,
-        _query: Self::Input,
-        _client: &mut C,
-    ) -> Box<dyn algo::InteractiveAlgo<C, GraphEvent<G::V, G::E>, Result = Self::Result> + 'a> {
-        todo!();
+        (source_id, target_id): Self::Input,
+        client: &mut C,
+    ) -> Box<dyn InteractiveAlgo<C, GraphEvent<G::V, G::E>, Result = Self::Result> + 'a> {
+        let (forward_driver, backward_driver) = self.vertex_data.stage();
+
+        let forward_search = Search {
+            id: source_id,
+            driver: forward_driver,
+        };
+        let forward = Controller {
+            search: forward_search,
+            heuristic: ZeroHeuristic,
+            queue: Queue::with_index_tracker(NullTracker),
+        };
+
+        let backward_search = Search {
+            id: target_id,
+            driver: backward_driver,
+        };
+        let backward = Controller {
+            search: backward_search,
+            heuristic: ZeroHeuristic,
+            queue: Queue::with_index_tracker(NullTracker),
+        };
+
+        if self.is_bidirectional {
+            let dijkstra = BidirectionalDrivenDijkstra::new(
+                &self.graph,
+                forward,
+                Some(backward),
+                Alternating::default(),
+                BoundReachedJointly,
+                client,
+            );
+            Box::new(algo::map(dijkstra, |result| {
+                reconstruct_path(&self.graph, result)
+            }))
+        } else {
+            let dijkstra = BidirectionalDrivenDijkstra::new(
+                &self.graph,
+                forward,
+                Some(backward),
+                AlwaysForward::default(),
+                EndToEnd {
+                    source_id,
+                    target_id,
+                },
+                client,
+            );
+            Box::new(algo::map(dijkstra, |result| {
+                reconstruct_path(&self.graph, result)
+            }))
+        }
     }
 }

@@ -7,13 +7,15 @@ use crate::{
     app::SharedState,
     graphs::{Path, VertexId},
     routing::{
+        a_star::algos::a_star,
+        dijkstra::algos::dijkstra,
         model::{LatLng, Road, RoutingInfo, RoutingNetwork},
         presentation::GraphEvent,
     },
     utils::algo::{self, EventClient, InteractiveAlgo},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ControlEvent {
     AvailableRoutingNetworks {
@@ -23,7 +25,9 @@ pub enum ControlEvent {
     PreprocessingReady,
     PreprocessingDone,
     QueryReady,
-    QueryDone,
+    QueryDone {
+        path: Option<Path<LatLng, Road>>,
+    },
     StepDone,
     ClosestVertexResponse {
         name: String,
@@ -34,22 +38,22 @@ pub enum ControlEvent {
 
 type AlgoEvent = GraphEvent<LatLng, Road>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ServerEvent {
     Control { event: ControlEvent },
     Algo { event: AlgoEvent },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AlgorithmSelection {
-    Djikstra { is_bidirectional: bool },
+    Dijkstra { is_bidirectional: bool },
     AStar { is_bidirectional: bool },
     ContractionHierarchies,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FrontendEvent {
     SelectRoutingNetwork {
@@ -86,8 +90,6 @@ impl SimpleEventClient<LatLng, Road> {
     }
 
     async fn flush(&mut self, sender: &mut Sender) {
-        let _ = sender;
-        let _ = sender;
         for event in std::mem::take(&mut self.events) {
             algo_event(event, sender).await;
         }
@@ -105,18 +107,17 @@ impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
 type Event = GraphEvent<LatLng, Road>;
 type Client = SimpleEventClient<LatLng, Road>;
 
-type QueryAlgo<'q> =
-    dyn InteractiveAlgo<Client, Event, Result = Option<Path<LatLng, Road>>> + 'q;
+type QueryAlgo<'q> = dyn InteractiveAlgo<Client, Event, Result = Option<Path<LatLng, Road>>> + 'q;
 
-type RoutingAlgo = crate::routing::RoutingAlgo<LatLng, Road, Client>;
-type Pathfinder = crate::routing::Pathfinder<LatLng, Road, Client>;
+type RoutingAlgo = crate::routing::RoutingAlgo<'static, LatLng, Road, Client>;
+type Pathfinder = crate::routing::Pathfinder<'static, LatLng, Road, Client>;
 
 #[self_referencing]
 struct RunningQuery {
     engine: Box<Pathfinder>,
     #[borrows(mut engine)]
     #[not_covariant]
-    query: Box<QueryAlgo<'this>>,
+    query: Option<Box<QueryAlgo<'this>>>,
 }
 
 enum AlgoState {
@@ -142,6 +143,8 @@ impl<'r> LocalState<'r> {
     }
 
     async fn handle_frontend_event(&mut self, frontend_event: FrontendEvent, sender: &mut Sender) {
+        // eprintln!("Received: {:?}", frontend_event);
+
         let mut is_change_preprocessing_to_queryable = false;
         let mut is_query_done = false;
 
@@ -185,17 +188,19 @@ impl<'r> LocalState<'r> {
                     let mut client = Client::new(true);
                     let running_query = RunningQueryBuilder {
                         engine,
-                        query_builder: |engine| engine.query(input, &mut client),
+                        query_builder: |engine| Some(engine.query(input, &mut client)),
                     }
                     .build();
                     self.algo_state = AlgoState::Query(running_query);
+                    client.flush(sender).await;
                     control_event(ControlEvent::QueryReady, sender).await;
                 }
             }
             FrontendEvent::StepQuery => {
                 if let AlgoState::Query(running_query) = &mut self.algo_state {
                     let mut client = Client::new(true);
-                    is_query_done = !running_query.with_query_mut(|query| !query.step(&mut client));
+                    is_query_done = running_query
+                        .with_query_mut(|query| !query.as_mut().unwrap().step(&mut client));
                     client.flush(sender).await;
                     control_event(ControlEvent::StepDone, sender).await;
                 }
@@ -204,8 +209,9 @@ impl<'r> LocalState<'r> {
                 if let AlgoState::Query(running_query) = &mut self.algo_state {
                     is_query_done = true;
                     let mut client = Client::new(false);
-                    running_query
-                        .with_query_mut(|query| algo::complete_dyn(query.as_mut(), &mut client));
+                    running_query.with_query_mut(|query| {
+                        algo::complete_dyn(query.as_mut().unwrap().as_mut(), &mut client)
+                    });
                 }
             }
             FrontendEvent::ClosestVertexRequest { name, lat_lng } => {
@@ -223,21 +229,32 @@ impl<'r> LocalState<'r> {
             if let AlgoState::Preprocessing(preprocessing) = preprocessing {
                 let engine = preprocessing.result_dyn();
                 self.algo_state = AlgoState::Queryable(engine);
+                control_event(ControlEvent::PreprocessingDone, sender).await;
             }
         }
 
         if is_query_done {
             let algo_state = std::mem::replace(&mut self.algo_state, AlgoState::None);
-            if let AlgoState::Query(running_query) = algo_state {
+            if let AlgoState::Query(mut running_query) = algo_state {
+                let path = running_query.with_query_mut(|query| query.take().unwrap().result_dyn());
                 let engine = running_query.into_heads().engine;
                 self.algo_state = AlgoState::Queryable(engine);
-                control_event(ControlEvent::QueryDone, sender).await;
+                control_event(ControlEvent::QueryDone { path }, sender).await;
             }
         }
     }
 
-    fn get_algo(&self, _algorithm_selection: AlgorithmSelection) -> Box<RoutingAlgo> {
-        todo!()
+    fn get_algo(&self, algorithm_selection: AlgorithmSelection) -> Box<RoutingAlgo> {
+        let graph_elements = self.routing_network.unwrap().graph_elements.clone();
+        match algorithm_selection {
+            AlgorithmSelection::Dijkstra { is_bidirectional } => {
+                dijkstra(graph_elements, is_bidirectional)
+            }
+            AlgorithmSelection::AStar { is_bidirectional } => {
+                a_star(graph_elements, is_bidirectional)
+            }
+            AlgorithmSelection::ContractionHierarchies => todo!(),
+        }
     }
 }
 
@@ -264,7 +281,6 @@ async fn socket_loop(mut sender: Sender, mut receiver: Receiver, routing_info: &
     .await;
 
     while let Some(Ok(message)) = receiver.next().await {
-        eprintln!("Message {:?}", message);
         match message {
             Message::Text(utf8_bytes) => {
                 let frontend_event = serde_json::from_str(&utf8_bytes).unwrap();
@@ -272,7 +288,7 @@ async fn socket_loop(mut sender: Sender, mut receiver: Receiver, routing_info: &
                     .handle_frontend_event(frontend_event, &mut sender)
                     .await;
             }
-            Message::Close(_) => break,
+            Message::Close(_) => eprintln!("Socket connection closed"),
             _ => {}
         }
     }
@@ -287,6 +303,7 @@ async fn control_event(event: ControlEvent, sender: &mut Sender) {
 }
 
 async fn server_event(event: ServerEvent, sender: &mut Sender) {
+    // eprintln!("Sent: {:?}", event);
     let serialized = serde_json::to_string(&event).unwrap();
     let message = Message::Text(serialized.into());
     sender.send(message).await.unwrap();
