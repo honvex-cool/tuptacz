@@ -3,7 +3,7 @@
 
 These repository contains (still WIP) our two projects for the Computationl Problems in public transportation course - they both share the frontend and the backend.
 
-- `TuptaCH` - a visualization of Contraction Hierarchies algorithm
+- `TuptaCH` - a route finder for Lesser Poland
 - `JakDotuptam` - a connection finder for public transport in Kraków
 
 ## Run instructions
@@ -61,11 +61,19 @@ AI was mostly used for prototyping, debugging, and reviewing ideas, rather than 
 
 The majority of the code was written directly by hand, with AI helping with minor snippets.
 
+Parts of the frontend for TuptaCH were vibecoded.
+
 The hedgehog logo was drawn by hand (with some inspirations from the internet) :) 
 
 ## Ideas, experiments, and failures
 
-### CH
+### TuptaCH
+
+Although the visualization is rather slow (due to the event generation, communication, and rendering overheads), the underlying framework has potential for good performance. Some flexible zero-cost or nearly-zero-cost Rust abstractions were created:
+- immutable vertex and edge views that can be implemented for any underlying graph representation
+- reusable memory pools using the epoch technique - implemented using Rust's `Cell<T>` type which usually has the same hardware representation as the wrapped type but enables interior mutability
+- generic Dijkstra's algorithm, controllable with drivers and heuristics (which are monomorphized and aggressively inlined in most cases)
+- "preproceessing - pathfinder - query" pattern combining the flexibility of dynamic dispatch *between* phases with the performance of static dispatch *within* phase
 
 ### RAPTOR
 
