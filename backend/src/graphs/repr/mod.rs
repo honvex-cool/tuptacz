@@ -1,3 +1,3 @@
-mod adj_list;
+mod adj_lists;
 
-pub use adj_list::*;
+pub use adj_lists::*;

@@ -1,24 +1,16 @@
 // A representation of transit network structure a bit more than raw GTFS
 use crate::{
+    id_type,
     transit::gtfs::{
         Gtfs,
         GtfsDateExceptionType::{ServiceAdded, ServiceRemoved},
-        GtfsServiceAvailability::{Available, Unavailable},
+        GtfsServiceAvailability::Available,
         GtfsShapeEntry, GtfsStopTime, ServiceDate, ServiceTime,
     },
 };
-use chrono::{Datelike, Weekday};
-use serde::{Serialize, Deserialize};
+use chrono::Weekday;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, collections::HashSet};
-
-
-// Macro for definitions of id-like types that use the same underlying represenation, but we want to distinguish them in code.
-macro_rules! id_type {
-    ($name:ident, $type:ty) => {
-        #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-        pub struct $name(pub $type);
-    };
-}
 
 // GTFS represents calendar with a column for each day, so to avoid duplication 7 times we use this macro.
 macro_rules! push_if_available {
@@ -37,35 +29,8 @@ id_type!(TripId, usize);
 id_type!(RouteId, usize);
 id_type!(ServiceId, usize);
 
-#[derive(Debug, Serialize, Clone, Copy)]
-pub struct LatLng {
-    pub latitude: f32,
-    pub longitude: f32,
-}
-
-impl LatLng {
-    const EARTH_RADIUS_METERS: f32 = 6_371_000.0;
-
-    // https://en.wikipedia.org/wiki/Haversine_formula#Formulation
-    pub fn distance_meters(&self, other: LatLng) -> f32 {
-        let lat1 = self.latitude.to_radians();
-        let lat2 = other.latitude.to_radians();
-        let lon1 = self.longitude.to_radians();
-        let lon2 = other.longitude.to_radians();
-
-        let dlat = lat2 - lat1;
-        let dlon = lon2 - lon1;
-
-        let lat_sin = (dlat / 2.0).sin();
-        let lon_sin = (dlon / 2.0).sin();
-
-        let hav_theta = lat_sin * lat_sin + lon_sin * lon_sin * lat1.cos() * lat2.cos();
-
-        let theta = hav_theta.sqrt().asin() * 2.0;
-
-        return theta * Self::EARTH_RADIUS_METERS;
-    }
-}
+pub type Float = f32;
+pub type LatLng = crate::utils::geo::LatLng<Float>;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Stop {
@@ -88,7 +53,7 @@ pub struct TripPattern {
 #[derive(Debug, Serialize, Clone, Copy)]
 pub enum RouteType {
     Bus,
-    Tram
+    Tram,
 }
 
 impl RouteType {
@@ -96,7 +61,7 @@ impl RouteType {
         match id {
             3 => Self::Bus,
             900 => Self::Tram,
-            _ => panic!("Unknown route type, {}", id)
+            _ => panic!("Unknown route type, {}", id),
         }
     }
 }
@@ -104,7 +69,7 @@ impl RouteType {
 #[derive(Debug, Serialize, Clone)]
 pub struct Route {
     pub short_name: String,
-    pub route_type: RouteType
+    pub route_type: RouteType,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -138,8 +103,8 @@ pub struct MetaStop {
     pub position: LatLng,
 }
 
-fn avg(old: f32, new_point: f32, points: usize) -> f32 {
-    return (old * points as f32 + new_point) / (points + 1) as f32;
+fn avg(old: Float, new_point: Float, points: usize) -> Float {
+    return (old * points as Float + new_point) / (points + 1) as Float;
 }
 
 impl MetaStop {
@@ -176,7 +141,7 @@ pub struct ServiceCalendar {
 #[derive(Debug)]
 pub struct FootPath {
     pub to: StopId,
-    pub distance_meters: f32,
+    pub distance_meters: Float,
 }
 
 pub struct TransitInfo {
@@ -193,7 +158,7 @@ pub struct TransitInfo {
 }
 
 impl TransitInfo {
-    const MAX_FOOTPATH_DISTANCE_METERS: f32 = 50.0;
+    const MAX_FOOTPATH_DISTANCE_METERS: Float = 50.0;
 
     pub fn new() -> Self {
         Self {
@@ -277,7 +242,7 @@ impl TransitInfo {
             route_id_map.insert(route.route_id.to_owned(), id);
             self.routes.push(Route {
                 short_name: route.route_short_name.clone(),
-                route_type: RouteType::from_id(route.route_type)
+                route_type: RouteType::from_id(route.route_type),
             });
         }
 

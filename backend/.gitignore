@@ -1,4 +1,7 @@
 target/
-maps/*.osm.pbf
+osm/**/*.osm.pbf
+osm/**/*.csv
+osm/**/*.json
+osm/**/*.bin
 gtfs/KRK
-gtfs/*.zip
+gtfs/**/*.zip

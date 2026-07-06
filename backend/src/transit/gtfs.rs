@@ -4,6 +4,8 @@ use csv::Reader;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::path::Path;
 
+use crate::transit::model::Float;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
 pub struct ServiceTime(pub u32);
 
@@ -119,15 +121,15 @@ pub struct GtfsStop {
     pub stop_id: String,
     pub stop_code: String,
     pub stop_name: String,
-    pub stop_lat: f32,
-    pub stop_lon: f32,
+    pub stop_lat: Float,
+    pub stop_lon: Float,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GtfsShapeEntry {
     pub shape_id: String,
-    pub shape_pt_lat: f32,
-    pub shape_pt_lon: f32,
+    pub shape_pt_lat: Float,
+    pub shape_pt_lon: Float,
     pub shape_pt_sequence: u32,
 }
 
