@@ -1,18 +1,26 @@
-use std::{cell::Cell, cmp::Ordering};
+use std::cell::Cell;
 
 use crate::{
-    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView}, routing::{
-        Weight, Weighted, ch::{Rank, ShortcutBreakdown}, dijkstra::{
-            self, BidirectionalDrivenDijkstra, Controller, Search, drivers::{Driver, LimitedDistanceDriver, PathTracker}, heuristics::ZeroHeuristic, policies::{AlwaysForward, NeverEarly},
-        }, presentation::GraphEvent,
-    }, utils::{
+    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView},
+    routing::{
+        Weight, Weighted,
+        ch::{Rank, ShortcutBreakdown},
+        dijkstra::{
+            self, BidirectionalDrivenDijkstra, Controller, Search,
+            drivers::{Driver, LimitedDistanceDriver, PathTracker},
+            heuristics::ZeroHeuristic,
+            policies::{AlwaysForward, NeverEarly},
+        },
+        presentation::GraphEvent,
+    },
+    utils::{
         algo::{self, EventClient, InteractiveAlgo, NullClient},
         pq::{self, NullTracker, Pq},
         staged::{Epoch, STARTING_EPOCH},
     },
 };
 
-pub type Priority = f64;
+pub type Priority = i64;
 
 struct Shortcut<G>
 where
@@ -40,6 +48,9 @@ where
 
     queue: Queue,
 
+    num_original_edges: usize,
+    breakdowns: Vec<ShortcutBreakdown>,
+
     state: State<G>,
     since_global_update: Stats,
 
@@ -52,12 +63,16 @@ where
     G::E: Weighted,
 {
     #[inline(always)]
-    fn new(graph: G, config: Config) -> Self {
+    pub fn new(graph: G, config: Config) -> Self {
         let num_vertices = graph.num_vertices();
+        let num_edges = graph.num_edges();
 
         let mut algo = Self {
             graph,
             config,
+
+            num_original_edges: num_edges,
+            breakdowns: vec![],
 
             queue: Pq::with_index_tracker(vec![None; num_vertices]),
             state: State::with_size(num_vertices),
@@ -77,7 +92,7 @@ where
     G::E: Weighted,
     C: EventClient<GraphEvent<G::V, G::E>>,
 {
-    type Result = (G, Vec<Rank>);
+    type Result = (G, Vec<Rank>, usize, Vec<ShortcutBreakdown>);
 
     #[inline(always)]
     fn step(&mut self, _client: &mut C) -> bool {
@@ -98,22 +113,11 @@ where
     }
 
     fn result(self) -> Self::Result {
-        (self.graph, self.state.ranks)
+        (self.graph, self.state.ranks, self.num_original_edges, self.breakdowns)
     }
 
     fn result_dyn(self: Box<Self>) -> Self::Result {
-        (self.graph, self.state.ranks)
-    }
-}
-
-#[derive(PartialEq, PartialOrd, Default)]
-struct OrdPriority(Priority);
-
-impl Eq for OrdPriority {}
-
-impl Ord for OrdPriority {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+        (self.graph, self.state.ranks, self.num_original_edges, self.breakdowns)
     }
 }
 
@@ -134,7 +138,7 @@ impl Stats {
     }
 }
 
-type Queue = Pq<VertexId, OrdPriority, pq::Min, Vec<Option<usize>>>;
+type Queue = Pq<VertexId, Priority, pq::Min, Vec<Option<usize>>>;
 
 impl<G> Contraction<G>
 where
@@ -163,6 +167,7 @@ where
             let edge = shortcut.weight.into();
             self.graph
                 .add_edge(shortcut.start_id, shortcut.end_id, edge);
+            self.breakdowns.push(shortcut.breakdown);
         }
     }
 
@@ -183,7 +188,7 @@ where
         let max_outgoing_weight = outgoing_edges
             .iter()
             .map(|edge| edge.weight())
-            .max_by(|lhs, rhs| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal))
+            .max()
             .unwrap();
 
         let mut shortcuts = vec![];
@@ -200,6 +205,7 @@ where
             let current_epoch = state.advance_epoch();
 
             let driver = LocalDijkstraDriver::new(
+                id,
                 current_epoch,
                 &outgoing_edges,
                 &mut state.distances,
@@ -236,6 +242,9 @@ where
             algo::complete(&mut dijkstra, &mut client);
 
             for outgoing_edge in &outgoing_edges {
+                if incoming_edge.start.id == outgoing_edge.end.id {
+                    continue;
+                }
                 let distance_through_contracted = incoming_weight + outgoing_edge.weight();
                 if state.distances[outgoing_edge.end.id].get() > distance_through_contracted {
                     let breakdown = [incoming_edge.descriptor(), outgoing_edge.descriptor()];
@@ -267,15 +276,16 @@ where
         let (current_priority, shortcuts) =
             Self::calculate_priority(id, &self.graph, &mut self.state);
 
-        let priority_to_update = self.queue.peek().and_then(|(_, &OrdPriority(priority))| {
-            (current_priority > priority).then_some(current_priority)
-        });
+        let priority_to_update = self
+            .queue
+            .peek()
+            .and_then(|(_, &priority)| (current_priority > priority).then_some(current_priority));
 
         (priority_to_update, shortcuts)
     }
 
     fn lazy_update_priority(&mut self, id: VertexId, priority: Priority) {
-        self.queue.push(id, OrdPriority(priority));
+        self.queue.push(id, priority);
         self.since_global_update.num_lazy_updates += 1;
     }
 
@@ -325,7 +335,7 @@ where
         for vertex in vertices {
             if is_uncontracted(vertex.id, &state.ranks) {
                 let (current_priority, _) = Self::calculate_priority(vertex.id, graph, state);
-                queue.push_or_update(vertex.id, OrdPriority(current_priority));
+                queue.push_or_update(vertex.id, current_priority);
             }
         }
     }
@@ -406,6 +416,7 @@ where
 }
 
 struct LocalDijkstraDriver<'s, W> {
+    id: VertexId,
     current_epoch: Epoch,
     distances: &'s mut [Cell<W>],
     should_be_visited: &'s mut [Cell<bool>],
@@ -420,6 +431,7 @@ where
     W: Weight,
 {
     fn new<V, E>(
+        id: VertexId,
         current_epoch: Epoch,
         outgoing_edges: &[EdgeView<V, E>],
         distances: &'s mut [Cell<W>],
@@ -428,6 +440,7 @@ where
         ranks: &'s [Rank],
     ) -> Self {
         let driver = Self {
+            id,
             current_epoch,
             distances,
             should_be_visited,
@@ -487,12 +500,14 @@ where
 {
     fn should_consider_edge(&self, edge: EdgeView<V, E>) -> bool {
         self.refresh(edge.end.id);
-        is_uncontracted(edge.end.id, self.ranks)
+        edge.start.id != self.id
+            && edge.end.id != self.id
+            && is_uncontracted(edge.end.id, self.ranks)
     }
 
     fn should_consider_vertex(&self, vertex: VertexView<V>, _total_weight: E::Weight) -> bool {
         self.refresh(vertex.id);
-        is_uncontracted(vertex.id, self.ranks)
+        vertex.id != self.id && is_uncontracted(vertex.id, self.ranks)
     }
 
     fn visit(&mut self, vertex: VertexView<V>) -> bool {

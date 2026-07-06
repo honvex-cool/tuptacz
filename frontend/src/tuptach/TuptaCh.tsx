@@ -518,7 +518,7 @@ function QuerySelector({
 function TuptaCh() {
   const websocketProtocol =
     window.location.protocol === "https:" ? "wss:" : "ws:";
-  const websocketAddress = `${websocketProtocol}//${window.location.host}/ws`;
+  const websocketAddress = `${websocketProtocol}//localhost:3001/ws`;
   const ws = useRef<WebSocket | null>(null);
 
   const [availableRoutingNetworkNames, setAvailableRoutingNetworkNames] =
