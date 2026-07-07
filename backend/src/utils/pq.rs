@@ -83,7 +83,7 @@ where
 
 pub struct Pq<V, K, M, T = NullTracker> {
     keys: Vec<K>,
-    pub values: Vec<V>,
+    values: Vec<V>,
     index_tracker: T,
     _phantom: PhantomData<M>,
 }
@@ -121,6 +121,15 @@ where
         self.len() == 0
     }
 
+    pub fn clear(&mut self) {
+        for value in &self.values {
+            self.index_tracker.reset_index(value);
+        }
+
+        self.keys.clear();
+        self.values.clear();
+    }
+
     pub fn push(&mut self, value: V, key: K) {
         let index = self.len();
 
@@ -137,6 +146,11 @@ where
 
     pub fn pop(&mut self) -> Option<(V, K)> {
         self.pop_at(0)
+    }
+
+    #[inline(always)]
+    pub fn iter_values(&self) -> impl Iterator<Item = &V> {
+        self.values.iter()
     }
 
     fn pop_at(&mut self, index: usize) -> Option<(V, K)> {

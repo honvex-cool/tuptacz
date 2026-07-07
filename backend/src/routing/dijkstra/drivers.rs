@@ -207,6 +207,11 @@ where
     }
 
     #[inline(always)]
+    pub fn into_inner(self) -> D {
+        self.inner
+    }
+
+    #[inline(always)]
     fn is_good(&self, weight: W) -> bool {
         weight <= self.limit
     }

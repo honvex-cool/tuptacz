@@ -22,7 +22,18 @@ export interface Edge {
   props: Road;
 }
 
+export interface PriorityParts {
+  e: number;
+  s: number;
+  d: number;
+  o: number;
+  q: number;
+}
+
 export type HighlightMode = "Visited" | "Awaiting" | "Source";
+
+export type HighlightDescription =
+  "Contraction" | "LazyUpdate" | "UpdateInGlobal" | "Short" | "Long";
 
 export interface HighlightVertex {
   type: "HighlightVertex";
@@ -36,13 +47,70 @@ export interface HighlightEdge {
   mode: HighlightMode;
 }
 
+export interface Contraction {
+  type: "Contraction";
+  vertex: Vertex;
+  shortcuts: [number, Edge, Edge][];
+}
+
+export interface LazyUpdate {
+  type: "LazyUpdate";
+  vertex: Vertex;
+}
+
+export interface UpdateInGlobal {
+  type: "UpdateInGlobal";
+  vertex: Vertex;
+  coefficients: PriorityParts;
+  terms: PriorityParts;
+  priority: number;
+}
+
+export interface GlobalUpdateTriggered {
+  type: "GlobalUpdateTriggered";
+  ratio: number;
+  allowed_ratio: number;
+  time_since_global_update: number;
+}
+
+export interface QuerySummary {
+  type: "QuerySummary";
+  num_settled_vertices: number;
+  num_inspected_edges: number;
+}
+
+export interface ContractionSummary {
+  type: "ContractionSummary";
+  stats: {
+    num_steps: number;
+    num_contractions: number;
+    num_shortcuts: number;
+    num_lazy_updates: number;
+    num_global_updates: number;
+  };
+}
+
+export interface Interrupt {
+  type: "Interrupt";
+}
+
 export interface Progress {
   type: "Progress";
   current: number;
   total: number;
 }
 
-export type GraphAction = HighlightVertex | HighlightEdge | Progress;
+export type GraphAction =
+  | HighlightVertex
+  | HighlightEdge
+  | Contraction
+  | LazyUpdate
+  | UpdateInGlobal
+  | GlobalUpdateTriggered
+  | QuerySummary
+  | ContractionSummary
+  | Interrupt
+  | Progress;
 
 export interface AlgoEvent {
   action: GraphAction;
@@ -141,8 +209,8 @@ export interface StepPreprocessing {
   type: "StepPreprocessing";
 }
 
-export interface RunPreprocessingToCompletion {
-  type: "RunPreprocessingToCompletion";
+export interface RunPreprocessingFreely {
+  type: "RunPreprocessingFreely";
 }
 
 export interface SelectQuery {
@@ -155,8 +223,8 @@ export interface StepQuery {
   type: "StepQuery";
 }
 
-export interface RunQueryToCompletion {
-  type: "RunQueryToCompletion";
+export interface RunQueryFreely {
+  type: "RunQueryFreely";
 }
 
 export interface ClosestVertexRequest {
@@ -169,8 +237,8 @@ export type FrontendEvent =
   | SelectRoutingNetwork
   | SelectAlgorithm
   | StepPreprocessing
-  | RunPreprocessingToCompletion
+  | RunPreprocessingFreely
   | SelectQuery
   | StepQuery
-  | RunQueryToCompletion
+  | RunQueryFreely
   | ClosestVertexRequest;

@@ -1,14 +1,9 @@
 use crate::{
     delegate_path_tracking,
-    graphs::{
-        EdgeDescriptor, EdgeView, Graph, GraphElements, Path, VertexId, repr::AdjLists,
-    },
+    graphs::{EdgeDescriptor, EdgeView, Graph, GraphElements, Path, VertexId, repr::AdjLists},
     routing::{
         self, BasicVertexDataArray, RoutingAlgo, Weighted,
-        ch::{
-            Rank, ShortcutBreakdown,
-            contraction::{Config, Contraction},
-        },
+        ch::{Config, Rank, ShortcutBreakdown, contraction::Contraction},
         dijkstra::{
             BidirectionalDrivenDijkstra, Controller, Queue, Search,
             drivers::{Driver, PathTracker, VertexTracker},
@@ -108,8 +103,6 @@ where
         dyn crate::utils::algo::InteractiveAlgo<C, GraphEvent<G::V, G::E>, Result = Self::Result>
             + 'a,
     > {
-        eprintln!("Querying search {} to {} with {} available shortcuts", source_id, target_id, self.breakdowns.len());
-
         let (forward, backward) = self.vertex_data.stage();
 
         let forward = Search {
@@ -201,7 +194,7 @@ where
             if edge.id.0 < num_original_edges {
                 unpacked_path.push(edge.detach());
             } else {
-                let [first, second] = breakdowns[edge.id.0 - num_original_edges];
+                let [first, second] = breakdowns[edge.id.0 - num_original_edges].descriptors;
                 stack.push(second);
                 stack.push(first);
             }

@@ -70,13 +70,13 @@ where
     }
 
     #[inline(always)]
-    fn result(self) -> Self::Result {
+    fn result(self, _client: &mut C) -> Self::Result {
         self.0
     }
 
     #[inline(always)]
-    fn result_dyn(self: Box<Self>) -> Self::Result {
-        self.result()
+    fn result_dyn(self: Box<Self>, client: &mut C) -> Self::Result {
+        self.result(client)
     }
 }
 

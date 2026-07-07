@@ -10,7 +10,7 @@ use crate::{
     graphs::{Path, VertexId},
     routing::{
         a_star::algos::a_star,
-        ch::{algos::ch, contraction::Config},
+        ch::{Config, PriorityParts, algos::ch},
         dijkstra::algos::dijkstra,
         model::{LatLng, Road, RoutingInfo, RoutingNetwork},
         presentation::{GraphAction, GraphEvent},
@@ -70,13 +70,13 @@ pub enum FrontendEvent {
         algorithm_selection: AlgorithmSelection,
     },
     StepPreprocessing,
-    RunPreprocessingToCompletion,
+    RunPreprocessingFreely,
     SelectQuery {
         source_id: VertexId,
         target_id: VertexId,
     },
     StepQuery,
-    RunQueryToCompletion,
+    RunQueryFreely,
     ClosestVertexRequest {
         name: String,
         lat_lng: LatLng,
@@ -86,6 +86,7 @@ pub enum FrontendEvent {
 struct SimpleEventClient<V, E> {
     events: Vec<GraphEvent<V, E>>,
     is_enabled: bool,
+    is_interrupt_encountered: bool,
 }
 
 impl SimpleEventClient<LatLng, Road> {
@@ -93,32 +94,32 @@ impl SimpleEventClient<LatLng, Road> {
         Self {
             events: Vec::new(),
             is_enabled,
+            is_interrupt_encountered: false,
         }
     }
 
     async fn flush(&mut self, sender: &mut Sender) {
         for event in std::mem::take(&mut self.events) {
-            if self.is_enabled
-                || matches!(
-                    event,
-                    GraphEvent {
-                        action: GraphAction::Progress {
-                            current: _,
-                            total: _
-                        },
-                        comment: _
-                    }
-                )
-            {
-                algo_event(event, sender).await;
-            }
+            algo_event(event, sender).await;
         }
     }
 }
 
 impl<V, E> EventClient<GraphEvent<V, E>> for SimpleEventClient<V, E> {
     fn consume(&mut self, event: GraphEvent<V, E>) {
-        if self.is_enabled {
+        if matches!(event.action, GraphAction::Interrupt) {
+            self.is_interrupt_encountered = true;
+        }
+        if self.is_enabled
+            || self.is_interrupt_encountered
+            || matches!(
+                event.action,
+                GraphAction::Progress {
+                    current: _,
+                    total: _
+                }
+            )
+        {
             self.events.push(event);
         }
     }
@@ -202,11 +203,15 @@ impl<'r> LocalState<'r> {
                     control_event(ControlEvent::StepDone, sender).await;
                 }
             }
-            FrontendEvent::RunPreprocessingToCompletion => {
+            FrontendEvent::RunPreprocessingFreely => {
                 if let AlgoState::Preprocessing(preprocessing) = &mut self.algo_state {
                     let mut client = Client::new(false);
-                    algo::complete_dyn(preprocessing.as_mut(), &mut client);
-                    is_change_preprocessing_to_queryable = true;
+                    let mut is_running = true;
+                    while is_running && !client.is_interrupt_encountered {
+                        is_running = preprocessing.step(&mut client);
+                        client.flush(sender).await;
+                    }
+                    is_change_preprocessing_to_queryable = !is_running;
                 }
             }
             FrontendEvent::SelectQuery {
@@ -236,23 +241,13 @@ impl<'r> LocalState<'r> {
                     control_event(ControlEvent::StepDone, sender).await;
                 }
             }
-            FrontendEvent::RunQueryToCompletion => {
+            FrontendEvent::RunQueryFreely => {
                 if let AlgoState::Query(running_query) = &mut self.algo_state {
                     is_query_done = true;
                     let mut client = Client::new(false);
-                    loop {
-                        let is_running = running_query.with_query_mut(|query| {
-                            if let Some(query) = query {
-                                query.step(&mut client)
-                            } else {
-                                false
-                            }
-                        });
-                        client.flush(sender).await;
-                        if !is_running {
-                            break;
-                        }
-                    }
+                    running_query.with_query_mut(|query| {
+                        algo::complete_dyn(query.as_mut().unwrap().as_mut(), &mut client)
+                    });
                 }
             }
             FrontendEvent::ClosestVertexRequest { name, lat_lng } => {
@@ -268,21 +263,24 @@ impl<'r> LocalState<'r> {
         if is_change_preprocessing_to_queryable {
             let preprocessing = std::mem::replace(&mut self.algo_state, AlgoState::None);
             if let AlgoState::Preprocessing(preprocessing) = preprocessing {
-                let engine = preprocessing.result_dyn();
+                let mut client = Client::new(true);
+                let engine = preprocessing.result_dyn(&mut client);
                 self.algo_state = AlgoState::Queryable(engine);
+                client.flush(sender).await;
                 control_event(ControlEvent::PreprocessingDone, sender).await;
-                eprintln!("Preprocessing done");
             }
         }
 
         if is_query_done {
             let algo_state = std::mem::replace(&mut self.algo_state, AlgoState::None);
             if let AlgoState::Query(mut running_query) = algo_state {
-                let path = running_query.with_query_mut(|query| query.take().unwrap().result_dyn());
+                let mut client = Client::new(true);
+                let path = running_query
+                    .with_query_mut(|query| query.take().unwrap().result_dyn(&mut client));
                 let engine = running_query.into_heads().engine;
                 self.algo_state = AlgoState::Queryable(engine);
+                client.flush(sender).await;
                 control_event(ControlEvent::QueryDone { path }, sender).await;
-                eprintln!("Query done");
             }
         }
     }
@@ -301,6 +299,13 @@ impl<'r> LocalState<'r> {
                 Config {
                     allowed_lazy_updates_to_contractions_ratio: 3.0,
                     allowed_time_between_global_updates: usize::MAX,
+                    coefficients: PriorityParts {
+                        e: 1,
+                        s: 1,
+                        d: 1,
+                        o: 1,
+                        q: 1,
+                    },
                 },
             ),
         }

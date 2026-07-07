@@ -8,6 +8,8 @@ import {
   TileLayer,
   useMapEvents,
   GeoJSON,
+  CircleMarker,
+  Tooltip,
 } from "react-leaflet";
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
@@ -17,9 +19,11 @@ import type {
   ControlEvent,
   Edge,
   FrontendEvent,
+  HighlightDescription,
   HighlightMode,
   LatLng,
   ServerEvent,
+  Vertex,
 } from "./presentation";
 import Slider from "@mui/material/Slider";
 import Select from "react-select";
@@ -49,8 +53,13 @@ const phaseOrder: Record<Phase, number> = {
   QueryDone: 8,
 };
 
+type RoutingNetwork = {
+  numVertices: number;
+  numEdges: number;
+  polygon: GeoJsonObject;
+};
+
 type MapPoint = {
-  id: number;
   longitude: number;
   latitude: number;
   color: [number, number, number];
@@ -58,13 +67,19 @@ type MapPoint = {
 };
 
 type MapEdge = {
-  id: number;
   path: [number, number][];
   color: [number, number, number];
   width: number;
 };
 
-function highlightColor(mode: HighlightMode): [number, number, number] {
+type Progress = {
+  current: number;
+  total: number;
+};
+
+function highlightColor(
+  mode: HighlightMode | HighlightDescription,
+): [number, number, number] {
   switch (mode) {
     case "Visited":
       return [255, 80, 80];
@@ -72,6 +87,135 @@ function highlightColor(mode: HighlightMode): [number, number, number] {
       return [0, 120, 255];
     case "Source":
       return [0, 255, 0];
+    case "Contraction":
+      return [255, 0, 0];
+    case "LazyUpdate":
+      return [0, 0, 255];
+    case "UpdateInGlobal":
+      return [0, 255, 0];
+    case "Long":
+      return [0, 0, 255];
+    case "Short":
+      return [255, 0, 0];
+  }
+}
+
+function modeComment(mode: HighlightMode) {
+  switch (mode) {
+    case "Source":
+      return "is a source";
+    case "Awaiting":
+      return "enqueued";
+    case "Visited":
+      return "settled";
+  }
+}
+
+function InfoComponent({ algoEvent }: { algoEvent: AlgoEvent }) {
+  const action = algoEvent.action;
+  switch (action.type) {
+    case "HighlightVertex":
+      const [r, g, b] = highlightColor(action.mode);
+      return (
+        <>
+          Vertex{" "}
+          <span style={{ color: `rgb(${r}, ${g}, ${b})` }}>
+            {modeComment(action.mode)}
+          </span>
+        </>
+      );
+    case "HighlightEdge":
+      return <></>;
+    case "Contraction":
+      return (
+        <>
+          <div>
+            <span style={{ color: "blue" }}>Contraction</span>
+          </div>
+          <div className="details-box">
+            added {action.shortcuts.length} shortcuts
+          </div>
+        </>
+      );
+    case "LazyUpdate":
+      return (
+        <>
+          <div>
+            <span style={{ color: "yellow" }}>Updated (lazy)</span>
+          </div>
+        </>
+      );
+    case "UpdateInGlobal":
+      return (
+        <>
+          <div>
+            <span style={{ color: "blue" }}>Updated (global):</span>
+          </div>
+          <div className="details-box">
+            <div>
+              E: {action.coefficients.e} * {action.terms.e}
+            </div>
+            <div>
+              S: {action.coefficients.s} * {action.terms.s}
+            </div>
+            <div>
+              D: {action.coefficients.d} * {action.terms.d}
+            </div>
+            <div>
+              O: {action.coefficients.o} * {action.terms.o}
+            </div>
+            <div>
+              Q: {action.coefficients.q} * {action.terms.q}
+            </div>
+          </div>
+        </>
+      );
+    case "GlobalUpdateTriggered":
+      return (
+        <div>
+          <span style={{ color: "green" }}>Global update triggered</span>
+        </div>
+      );
+    case "QuerySummary":
+      return (
+        <>
+          <div>
+            <span style={{ color: "green" }}>Query phase complete:</span>
+          </div>
+          <div className="details-box">
+            <div>{action.num_settled_vertices} settled vertices</div>
+            <div>{action.num_inspected_edges} inspected edges</div>
+          </div>
+        </>
+      );
+    case "ContractionSummary":
+      return (
+        <>
+          <div>
+            <span style={{ color: "green" }}>Contraction phase complete:</span>
+          </div>
+          <div className="details-box">
+            <div>{action.stats.num_steps} total steps</div>
+            <div>
+              ({action.stats.num_contractions} contractions)
+            </div>
+            <div>{action.stats.num_shortcuts} shortcuts added</div>
+            <div>{action.stats.num_lazy_updates} lazy updates</div>
+            <div>{action.stats.num_global_updates} global updates</div>
+          </div>
+        </>
+      );
+    case "Interrupt":
+      return (
+        <>
+          <div>
+            <span style={{ color: "orange" }}>Free run interrupted:</span>
+          </div>
+          <div className="details-box">{algoEvent.comment}</div>
+        </>
+      );
+    case "Progress":
+      return <></>;
   }
 }
 
@@ -86,23 +230,19 @@ type GraphProps = {
   pendingPoint: QueryPoint | null;
 };
 
-function PolygonComponent({ polygon }: { polygon: GeoJsonObject | null }) {
+function PolygonComponent({ polygon }: { polygon: GeoJsonObject }) {
   const map = useMap();
 
   useEffect(() => {
-    if (polygon !== null) {
-      const layer = L.geoJSON(polygon);
-      map.fitBounds(layer.getBounds());
-    }
+    const layer = L.geoJSON(polygon);
+    map.fitBounds(layer.getBounds());
   }, [map, polygon]);
 
-  return polygon !== null ? (
+  return (
     <GeoJSON
       data={polygon}
       style={{ fillOpacity: 0.1, weight: 1, color: "#3388ff" }}
     />
-  ) : (
-    <></>
   );
 }
 
@@ -158,39 +298,6 @@ function GraphComponent({
           getFillColor: (p: MapPoint) => p.color,
           radiusMinPixels: 4,
         }),
-        new ScatterplotLayer({
-          id: "source",
-          data: source ? [source] : [],
-          getPosition: (p: QueryPoint) => [
-            p.lat_lng.longitude,
-            p.lat_lng.latitude,
-          ],
-          getRadius: 8,
-          getFillColor: [0, 255, 0],
-          radiusMinPixels: 4,
-        }),
-        new ScatterplotLayer({
-          id: "target",
-          data: target ? [target] : [],
-          getPosition: (p: QueryPoint) => [
-            p.lat_lng.longitude,
-            p.lat_lng.latitude,
-          ],
-          getRadius: 8,
-          getFillColor: [0, 0, 255],
-          radiusMinPixels: 4,
-        }),
-        new ScatterplotLayer({
-          id: "pending",
-          data: pendingPoint ? [pendingPoint] : [],
-          getPosition: (p: QueryPoint) => [
-            p.lat_lng.longitude,
-            p.lat_lng.latitude,
-          ],
-          getRadius: 8,
-          getFillColor: [255, 165, 0],
-          radiusMinPixels: 4,
-        }),
       ],
     });
     return () => {
@@ -203,18 +310,18 @@ function GraphComponent({
 
 function Controls({
   numStepsInProgress,
+  isRunningFreely,
   requestStep,
-  requestRunToCompletion,
+  requestRunFreely,
 }: {
   numStepsInProgress: number;
+  isRunningFreely: boolean;
   requestStep: () => void;
-  requestRunToCompletion: () => void;
+  requestRunFreely: () => void;
 }) {
   const autoplayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [autoplaySpeed, setAutoplaySpeed] = useState<number | null>(null);
-  const [isRunToCompletionRequested, setIsRunToCompletionRequested] =
-    useState<boolean>(false);
 
   function startAutoplay(speed: number) {
     if (autoplayRef.current) clearInterval(autoplayRef.current);
@@ -240,7 +347,7 @@ function Controls({
     <div className="controls">
       <button
         className="btn-primary"
-        disabled={isAutoplay || numStepsInProgress > 0}
+        disabled={isRunningFreely || isAutoplay || numStepsInProgress > 0}
         onClick={() => requestStep()}
       >
         Step
@@ -248,28 +355,16 @@ function Controls({
       <div>
         <button
           className="btn-primary"
+          disabled={isRunningFreely}
           onClick={() => {
             if (isAutoplay) {
               stopAutoplay();
             } else {
-              startAutoplay(autoplaySpeed ?? 10);
+              startAutoplay(autoplaySpeed ?? 1);
             }
           }}
         >
           {isAutoplay ? "Manual" : "Autoplay"}
-        </button>
-      </div>
-      <div>
-        <button
-          disabled={isRunToCompletionRequested}
-          className="btn-primary"
-          onClick={() => {
-            setIsRunToCompletionRequested(true);
-            stopAutoplay();
-            requestRunToCompletion();
-          }}
-        >
-          Run to completion
         </button>
       </div>
       <label>
@@ -281,8 +376,20 @@ function Controls({
           onChange={(_, value) => startAutoplay(Number(value as number))}
           disabled={!isAutoplay}
         />
-        {autoplaySpeed} fps
+        {autoplaySpeed}
       </label>
+      <div>
+        <button
+          className="btn-primary"
+          disabled={isRunningFreely}
+          onClick={() => {
+            stopAutoplay();
+            requestRunFreely();
+          }}
+        >
+          Run freely
+        </button>
+      </div>
     </div>
   );
 }
@@ -370,7 +477,7 @@ function AlgorithmSelector({
       />
       {selected !== null && (
         <>
-          <h3>Configure algorithm</h3>
+          <div>Configure algorithm</div>
           {selected === "Dijkstra" && (
             <DijkstraSelection setSelection={setAlgorithm} />
           )}
@@ -476,53 +583,53 @@ function QuerySelector({
 
   return (
     <div>
-      <h5>Select Query Points</h5>
-      <div>
-        <button
-          className="btn-primary"
-          onClick={startSelectingSource}
-          disabled={selecting === "source"}
-        >
-          {selecting === "source" ? "Click map for source..." : "Pick Source"}
-        </button>
-        {source !== null && <span> ✓ Source set</span>}
-      </div>
-
+      Select Query Points
+      {(pendingPoint === null || selecting === "target") && (
+        <div>
+          <button
+            className="btn-primary"
+            onClick={startSelectingSource}
+            disabled={selecting === "source"}
+          >
+            {selecting === "source" ? "Click map for source..." : "Pick Source"}
+          </button>
+          {source !== null && <span> ✓ Source set</span>}
+        </div>
+      )}
       {selecting === "source" && pendingPoint !== null && (
         <div>
+          <button className="btn-primary" onClick={acceptPending}>
+            Accept
+          </button>
           <span>
             Nearest: ({pendingPoint.lat_lng.latitude.toFixed(4)},{" "}
             {pendingPoint.lat_lng.longitude.toFixed(4)})
           </span>
-          <button className="btn-primary" onClick={acceptPending}>
-            Accept
-          </button>
         </div>
       )}
-
-      <div>
-        <button
-          className="btn-primary"
-          onClick={startSelectingTarget}
-          disabled={selecting === "target" || source === null}
-        >
-          {selecting === "target" ? "Click map for target..." : "Pick Target"}
-        </button>
-        {target !== null && <span> ✓ Target set</span>}
-      </div>
-
+      {(pendingPoint === null || selecting === "source") && (
+        <div>
+          <button
+            className="btn-primary"
+            onClick={startSelectingTarget}
+            disabled={selecting === "target" || source === null}
+          >
+            {selecting === "target" ? "Click map for target..." : "Pick Target"}
+          </button>
+          {target !== null && <span> ✓ Target set</span>}
+        </div>
+      )}
       {selecting === "target" && pendingPoint !== null && (
         <div>
+          <button className="btn-primary" onClick={acceptPending}>
+            Accept
+          </button>
           <span>
             Nearest: ({pendingPoint.lat_lng.latitude.toFixed(4)},{" "}
             {pendingPoint.lat_lng.longitude.toFixed(4)})
           </span>
-          <button className="btn-primary" onClick={acceptPending}>
-            Accept
-          </button>
         </div>
       )}
-
       <div>
         <button className="btn-primary" onClick={reset}>
           Reset
@@ -544,23 +651,21 @@ function QuerySelector({
 }
 
 function TuptaCh() {
-  const websocketProtocol =
-    window.location.protocol === "https:" ? "wss:" : "ws:";
-  const websocketAddress = `${websocketProtocol}//${window.location.host}/ws`;
   const ws = useRef<WebSocket | null>(null);
 
   const [availableRoutingNetworkNames, setAvailableRoutingNetworkNames] =
     useState<string[]>([]);
 
-  const [routingNetworkName, setRoutingNetworkName] = useState<string | null>(
+  const [selectedRoutingNetworkName, setSelectedRoutingNetworkName] = useState<
+    string | null
+  >(null);
+  const [routingNetwork, setRoutingNetwork] = useState<RoutingNetwork | null>(
     null,
   );
-  const [numVertices, setNumVertices] = useState<number | null>(null);
-  const [numEdges, setNumEdges] = useState<number | null>(null);
-  const [polygon, setPolygon] = useState<GeoJsonObject | null>(null);
 
   const [selecting, setSelecting] = useState<"source" | "target" | null>(null);
   const [pendingPoint, setPendingPoint] = useState<QueryPoint | null>(null);
+
   const [source, setSource] = useState<QueryPoint | null>(null);
   const [target, setTarget] = useState<QueryPoint | null>(null);
 
@@ -568,48 +673,141 @@ function TuptaCh() {
 
   const [mapPoints, setMapPoints] = useState<Map<number, MapPoint>>(new Map());
   const [mapEdges, setMapEdges] = useState<Map<number, MapEdge>>(new Map());
+
   const pendingPointUpdates = useRef<Map<number, MapPoint>>(new Map());
   const pendingEdgeUpdates = useRef<Map<number, MapEdge>>(new Map());
+
   const mapPointsRef = useRef<Map<number, MapPoint>>(new Map());
   const mapEdgesRef = useRef<Map<number, MapEdge>>(new Map());
 
-  function clear() {
+  const [phase, setPhase] = useState<Phase>("SelectRoutingNetwork");
+  const [isRunningFreely, setIsRunningFreely] = useState<boolean>(false);
+  const [numStepsPending, setNumStepsPending] = useState<number>(0);
+
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [algoEvents, setAlgoEvents] = useState<AlgoEvent[]>([]);
+
+  function clearAlgoEvents() {
+    setAlgoEvents([]);
+  }
+
+  function addAlgoEvent(algoEvent: AlgoEvent) {
+    setAlgoEvents((prev) => [...prev, algoEvent]);
+  }
+
+  function clearQuerySelection() {
     setSelecting(null);
     setPendingPoint(null);
     setSource(null);
     setTarget(null);
-    setMapPoints(new Map());
-    setMapEdges(new Map());
-    setPath(null);
   }
 
-  const [phase, setPhase] = useState<Phase>("SelectRoutingNetwork");
-  const [progress, setProgress] = useState<string | null>(null);
+  function clearMapDisplay() {
+    pendingPointUpdates.current.clear();
+    mapPointsRef.current.clear();
+    setMapPoints(new Map());
 
-  const [numStepsInProgress, setNumStepsInProgress] = useState<number>(0);
+    pendingEdgeUpdates.current.clear();
+    mapEdgesRef.current.clear();
+    setMapEdges(new Map());
+  }
 
-  const pathLength = path?.reduce((acc, edge) => acc + edge.props.length, 0);
+  function clear() {
+    clearAlgoEvents();
+    clearQuerySelection();
+    clearMapDisplay();
+    setPath(null);
+  }
 
   function send(event: FrontendEvent) {
     console.log(`sending ${event.type}`);
     ws.current?.send(JSON.stringify(event));
   }
 
+  function addPendingVertex(
+    vertex: Vertex,
+    mode: HighlightMode | HighlightDescription,
+  ) {
+    pendingPointUpdates.current.set(vertex.id, {
+      longitude: vertex.props.longitude,
+      latitude: vertex.props.latitude,
+      color: highlightColor(mode),
+      radius: 13,
+    });
+  }
+
+  function addPendingPolyline(
+    id: number,
+    points: LatLng[],
+    mode: HighlightMode | HighlightDescription,
+  ) {
+    pendingEdgeUpdates.current.set(id, {
+      path: points.map((p) => [p.longitude, p.latitude]),
+      color: highlightColor(mode),
+      width: 3,
+    });
+  }
+
+  function addPendingEdge(
+    edge: Edge,
+    mode: HighlightMode | HighlightDescription,
+  ) {
+    const points =
+      edge.props.points.length === 0
+        ? edge.props.points
+        : [edge.start.props, edge.end.props];
+    addPendingPolyline(edge.id, points, mode);
+  }
+
   function requestStep() {
-    setNumStepsInProgress((n) => n + 1);
+    clearAlgoEvents();
+    setNumStepsPending((n) => n + 1);
     const type = phase === "Preprocessing" ? "StepPreprocessing" : "StepQuery";
     send({ type });
   }
 
-  function requestRunToCompletion() {
+  function requestRunFreely() {
+    clearAlgoEvents();
     const type =
-      phase === "Preprocessing"
-        ? "RunPreprocessingToCompletion"
-        : "RunQueryToCompletion";
+      phase === "Preprocessing" ? "RunPreprocessingFreely" : "RunQueryFreely";
     send({ type });
   }
 
+  function handleMapClick(latitude: number, longitude: number) {
+    if (phase === "SelectQuery" && selecting !== null) {
+      let latLng = { latitude, longitude };
+      send({ type: "ClosestVertexRequest", name: selecting, lat_lng: latLng });
+    }
+  }
+
+  function handleRoutingNetworkSelect(newRoutingNetworkName: string) {
+    if (newRoutingNetworkName !== selectedRoutingNetworkName) {
+      clear();
+      setSelectedRoutingNetworkName(newRoutingNetworkName);
+      setRoutingNetwork(null);
+      send({
+        type: "SelectRoutingNetwork",
+        routing_network_name: newRoutingNetworkName,
+      });
+      setPhase("RoutingNetworkSelected");
+    }
+  }
+
+  function handleAlgorithmSelect(algorithmSelection: AlgorithmSelection) {
+    clear();
+    send({ type: "SelectAlgorithm", algorithm_selection: algorithmSelection });
+    setPhase("AlgorithmSelected");
+  }
+
+  function handleQuerySelect(sourceId: number, targetId: number) {
+    send({ type: "SelectQuery", source_id: sourceId, target_id: targetId });
+    setPhase("QuerySelected");
+  }
+
   useEffect(() => {
+    const websocketProtocol =
+      window.location.protocol === "https:" ? "wss:" : "ws:";
+    const websocketAddress = `${websocketProtocol}//${window.location.host}/ws`;
     ws.current = new WebSocket(websocketAddress);
     ws.current.onmessage = (e) => {
       const server_event: ServerEvent = JSON.parse(e.data);
@@ -623,36 +821,41 @@ function TuptaCh() {
               control_event.routing_network_names,
             );
             break;
+
           case "RoutingNetworkReady":
-            setNumVertices(control_event.num_vertices);
-            setNumEdges(control_event.num_edges);
-            setPolygon(control_event.polygon);
+            setRoutingNetwork({
+              numVertices: control_event.num_vertices,
+              numEdges: control_event.num_edges,
+              polygon: control_event.polygon,
+            });
             setPhase("SelectAlgorithm");
             setProgress(null);
             break;
+
           case "PreprocessingReady":
             setPhase("Preprocessing");
             setProgress(null);
             break;
+
           case "PreprocessingDone":
             setPhase("SelectQuery");
             break;
+
           case "QueryReady":
             setPhase("Query");
             break;
+
           case "QueryDone":
             setPhase("QueryDone");
             setPath(control_event.path);
             break;
+
           case "ClosestVertexResponse":
             setPendingPoint(control_event);
             break;
+
           case "StepDone":
-            setNumStepsInProgress((n) => n - 1);
-            console.log(
-              "StepDone, pending points:",
-              pendingPointUpdates.current.size,
-            );
+            setNumStepsPending((n) => n - 1);
             if (
               pendingPointUpdates.current.size > 0 ||
               pendingEdgeUpdates.current.size > 0
@@ -676,73 +879,63 @@ function TuptaCh() {
         }
       } else if (server_event.type === "Algo") {
         const algo_event: AlgoEvent = server_event.event;
+        addAlgoEvent(algo_event);
         const action = algo_event.action;
-        console.log(action);
+        console.log(`action.type: ${action.type}`);
 
         switch (action.type) {
           case "HighlightVertex":
-            console.log("adding pending point", action.vertex.id);
-            pendingPointUpdates.current.set(action.vertex.id, {
-              id: action.vertex.id,
-              longitude: action.vertex.props.longitude,
-              latitude: action.vertex.props.latitude,
-              color: highlightColor(action.mode),
-              radius: action.mode === "Source" ? 6 : 13,
-            });
-            console.log("adding", action.vertex.props);
+            addPendingVertex(action.vertex, action.mode);
             break;
 
           case "HighlightEdge":
-            pendingEdgeUpdates.current.set(action.edge.id, {
-              id: action.edge.id,
-              path: action.edge.props.points.map((p) => [
-                p.longitude,
-                p.latitude,
-              ]),
-              color: highlightColor(action.mode),
-              width: action.mode === "Source" ? 3 : 1,
+            addPendingEdge(action.edge, action.mode);
+            break;
+
+          case "Contraction":
+            clearMapDisplay();
+            addPendingVertex(action.vertex, "Contraction");
+            action.shortcuts.forEach((shortcut) => {
+              const [id, first, second] = shortcut;
+              addPendingEdge(first, "Long");
+              addPendingEdge(second, "Long");
+              let shortcutPolyline = [first.start.props, second.end.props];
+              addPendingPolyline(id, shortcutPolyline, "Short");
             });
             break;
 
+          case "LazyUpdate":
+            clearMapDisplay();
+            addPendingVertex(action.vertex, "LazyUpdate");
+            break;
+
+          case "UpdateInGlobal":
+            clearMapDisplay();
+            addPendingVertex(action.vertex, "UpdateInGlobal");
+            break;
+
+          case "GlobalUpdateTriggered":
+            clearMapDisplay();
+            break;
+
+          case "QuerySummary":
+            break;
+
+          case "ContractionSummary":
+            break;
+
+          case "Interrupt":
+            setIsRunningFreely(false);
+            break;
+
           case "Progress":
-            setProgress(`${action.current} / ${action.total}`);
+            setProgress(action);
             break;
         }
       }
     };
     return () => ws.current?.close();
   }, []);
-
-  function handleMapClick(latitude: number, longitude: number) {
-    if (phase === "SelectQuery" && selecting !== null) {
-      let latLng = { latitude, longitude };
-      send({ type: "ClosestVertexRequest", name: selecting, lat_lng: latLng });
-    }
-  }
-
-  function handleRoutingNetworkSelect(newRoutingNetworkName: string) {
-    if (newRoutingNetworkName !== routingNetworkName) {
-      clear();
-      setRoutingNetworkName(newRoutingNetworkName);
-      setPolygon(null);
-      send({
-        type: "SelectRoutingNetwork",
-        routing_network_name: newRoutingNetworkName,
-      });
-      setPhase("RoutingNetworkSelected");
-    }
-  }
-
-  function handleAlgorithmSelect(algorithmSelection: AlgorithmSelection) {
-    clear();
-    send({ type: "SelectAlgorithm", algorithm_selection: algorithmSelection });
-    setPhase("AlgorithmSelected");
-  }
-
-  function handleQuerySelect(sourceId: number, targetId: number) {
-    send({ type: "SelectQuery", source_id: sourceId, target_id: targetId });
-    setPhase("QuerySelected");
-  }
 
   return (
     <div className="container">
@@ -756,27 +949,27 @@ function TuptaCh() {
 
         {phaseOrder[phase] >= phaseOrder["SelectAlgorithm"] && (
           <>
-            <h6>
-              {numVertices ?? 0} vertices, {numEdges ?? 0} edges
-            </h6>
+            {routingNetwork?.numVertices ?? 0} vertices,{" "}
+            {routingNetwork?.numEdges ?? 0} edges
             <AlgorithmSelector onSelect={handleAlgorithmSelect} />
           </>
         )}
 
         {phase === "Preprocessing" && (
           <>
-            <h5>Control the preprocessing</h5>
+            Control the preprocessing
             <Controls
-              numStepsInProgress={numStepsInProgress}
+              numStepsInProgress={numStepsPending}
+              isRunningFreely={isRunningFreely}
               requestStep={requestStep}
-              requestRunToCompletion={requestRunToCompletion}
+              requestRunFreely={requestRunFreely}
             />
           </>
         )}
 
         {phaseOrder[phase] >= phaseOrder["SelectQuery"] && (
           <>
-            <h4>Preprocessing is done</h4>
+            Preprocessing is done
             {phase === "SelectQuery" && (
               <QuerySelector
                 onSubmit={handleQuerySelect}
@@ -792,21 +985,29 @@ function TuptaCh() {
             )}
             {phase === "Query" && (
               <>
-                <h5>Control the query</h5>
+                Control the query
                 <Controls
-                  numStepsInProgress={numStepsInProgress}
+                  numStepsInProgress={numStepsPending}
+                  isRunningFreely={isRunningFreely}
                   requestStep={requestStep}
-                  requestRunToCompletion={requestRunToCompletion}
+                  requestRunFreely={requestRunFreely}
                 />
               </>
             )}
             {phase === "QueryDone" && (
               <div>
-                <h4>Query is done</h4>
+                Query is done
                 {path === null ? (
-                  <h5>No path found!</h5>
+                  <div>No path found!</div>
                 ) : (
-                  <h5>Path found! {(pathLength! / 1000).toFixed(3)} km</h5>
+                  <div>
+                    Path found!{" "}
+                    {(
+                      path.reduce((acc, edge) => acc + edge.props.length, 0) /
+                      1000
+                    ).toFixed(3)}{" "}
+                    km ({path.length} edges)
+                  </div>
                 )}
                 <button
                   className="btn-primary"
@@ -822,7 +1023,17 @@ function TuptaCh() {
           </>
         )}
 
-        {progress !== null && <div>Progress: {progress}</div>}
+        {progress !== null && progress.current < progress.total && (
+          <>
+            <div>
+              <progress value={progress.current} max={progress.total} />
+            </div>
+            <div>
+              {((progress.current / progress.total) * 100).toFixed(0)} % (
+              {progress.current} / {progress.total})
+            </div>
+          </>
+        )}
       </div>
 
       <MapContainer
@@ -845,8 +1056,52 @@ function TuptaCh() {
           target={target}
           pendingPoint={pendingPoint}
         />
-        <PolygonComponent polygon={polygon} />
+        {routingNetwork !== null && (
+          <PolygonComponent polygon={routingNetwork.polygon} />
+        )}
+        {source && (
+          <CircleMarker
+            center={[source.lat_lng.latitude, source.lat_lng.longitude]}
+            radius={8}
+            pathOptions={{ color: "green", fillColor: "green", fillOpacity: 1 }}
+          >
+            <Tooltip permanent>Source</Tooltip>
+          </CircleMarker>
+        )}
+        {target && (
+          <CircleMarker
+            center={[target.lat_lng.latitude, target.lat_lng.longitude]}
+            radius={8}
+            pathOptions={{ color: "blue", fillColor: "blue", fillOpacity: 1 }}
+          >
+            <Tooltip permanent>Target</Tooltip>
+          </CircleMarker>
+        )}
+        {pendingPoint && (
+          <CircleMarker
+            center={[
+              pendingPoint.lat_lng.latitude,
+              pendingPoint.lat_lng.longitude,
+            ]}
+            radius={8}
+            pathOptions={{
+              color: "orange",
+              fillColor: "orange",
+              fillOpacity: 1,
+            }}
+          >
+            <Tooltip permanent>Pending</Tooltip>
+          </CircleMarker>
+        )}
       </MapContainer>
+
+      <div className="info-box">
+        {algoEvents.map((algoEvent) => (
+          <div>
+            <InfoComponent algoEvent={algoEvent} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

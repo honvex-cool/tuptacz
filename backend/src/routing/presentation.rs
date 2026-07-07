@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     graphs::{Edge, Vertex},
+    routing::ch::{Priority, PriorityParts, Stats},
     utils::algo::EventClient,
 };
 
@@ -29,6 +30,28 @@ pub enum GraphAction<V, E> {
         edge: Edge<V, E>,
         mode: HighlightMode,
     },
+    Contraction {
+        vertex: Vertex<V>,
+        shortcuts: Vec<(usize, Edge<V, E>, Edge<V, E>)>,
+    },
+    LazyUpdate {
+        vertex: Vertex<V>,
+    },
+    UpdateInGlobal {
+        vertex: Vertex<V>,
+        coefficients: PriorityParts,
+        terms: PriorityParts,
+        priority: Priority,
+    },
+    GlobalUpdateTriggered,
+    QuerySummary {
+        num_settled_vertices: usize,
+        num_inspected_edges: usize,
+    },
+    ContractionSummary {
+        stats: Stats,
+    },
+    Interrupt,
     Progress {
         current: usize,
         total: usize,
@@ -51,13 +74,13 @@ where
 
 #[inline(always)]
 fn is_relevant_ratio(current: usize, total: usize) -> bool {
-    if current == 0 {
-        return true;
+    if current == 0 || total == 0 {
+        return false;
     }
 
     let total = total as f64;
-    let current_ratio = ((current as f64) / total * 100.0).floor() as usize;
-    let previous_ratio = (((current - 1) as f64) / total * 100.0).floor() as usize;
+    let current_percent = ((current as f64) / total * 100.0).floor() as usize;
+    let previous_percent = (((current - 1) as f64) / total * 100.0).floor() as usize;
 
-    previous_ratio / 5 != current_ratio / 5
+    previous_percent != current_percent
 }
