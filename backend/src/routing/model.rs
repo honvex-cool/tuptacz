@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use kiddo::{KdTree, float::distance::SquaredEuclidean};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     graphs::{GraphElements, VertexId},
@@ -37,11 +38,12 @@ impl Weighted for Road {
 
 pub struct RoutingNetwork<E> {
     pub graph_elements: GraphElements<LatLng, E>,
+    pub polygon: Value,
     lat_lng_to_vertex_id: KdTree<Float, 2>,
 }
 
 impl<E> RoutingNetwork<E> {
-    pub fn new(graph_elements: GraphElements<LatLng, E>) -> Self {
+    pub fn new(graph_elements: GraphElements<LatLng, E>, polygon: Value) -> Self {
         let mut lat_lng_to_vertex_id = KdTree::with_capacity(graph_elements.vertices.len());
 
         for (id, vertex) in graph_elements.vertices.iter().enumerate() {
@@ -51,8 +53,13 @@ impl<E> RoutingNetwork<E> {
 
         Self {
             graph_elements,
+            polygon,
             lat_lng_to_vertex_id,
         }
+    }
+
+    pub fn size(&self) -> (usize, usize) {
+        (self.graph_elements.vertices.len(), self.graph_elements.edges.len())
     }
 
     pub fn nerest_vertex_id(&self, lat_lng: LatLng) -> VertexId {

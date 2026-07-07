@@ -64,6 +64,7 @@ where
             start: self.start.detach(),
             end: self.end.detach(),
             id: self.id,
+            descriptor: self.descriptor(),
             props: self.props.clone(),
         }
     }
@@ -118,7 +119,7 @@ impl<'g, V, E> Deref for EdgeView<'g, V, E> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct EdgeDescriptor {
     host_id: VertexId,
     index_within_host: usize,
@@ -135,6 +136,7 @@ pub struct Edge<V, E> {
     pub start: Vertex<V>,
     pub end: Vertex<V>,
     pub id: EdgeId,
+    pub descriptor: EdgeDescriptor,
     pub props: E,
 }
 

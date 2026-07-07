@@ -104,7 +104,7 @@ pub struct MetaStop {
 }
 
 fn avg(old: Float, new_point: Float, points: usize) -> Float {
-    return (old * points as Float + new_point) / (points + 1) as Float;
+    (old * points as Float + new_point) / (points + 1) as Float
 }
 
 impl MetaStop {
@@ -432,7 +432,7 @@ impl TransitInfo {
                 shape_id: *shape_id_map.get(&trip.shape_id).unwrap(),
                 service_id: *service_id_map.get(&trip.service_id).unwrap(),
                 stop_times: stop_times_map.remove(&trip.trip_id).unwrap(),
-                trip_pattern_id: trip_pattern_id,
+                trip_pattern_id,
             });
             self.trip_patterns[trip_pattern_id.0].trips.push(id);
         }
@@ -461,11 +461,11 @@ impl TransitInfo {
                 if distance_meters <= Self::MAX_FOOTPATH_DISTANCE_METERS {
                     self.foot_paths[stop_idx].push(FootPath {
                         to: *new_stop_id,
-                        distance_meters: distance_meters,
+                        distance_meters,
                     });
                     self.foot_paths[new_stop_id.0].push(FootPath {
                         to: StopId(stop_idx),
-                        distance_meters: distance_meters,
+                        distance_meters,
                     })
                 }
             }
@@ -473,9 +473,9 @@ impl TransitInfo {
     }
 
     pub fn add_gtfs(&mut self, gtfs: &Gtfs) {
-        let stop_id_map = self.add_stops(&gtfs);
-        let route_id_map = self.add_routes(&gtfs);
-        let shape_id_map = self.add_shapes(&gtfs);
+        let stop_id_map = self.add_stops(gtfs);
+        let route_id_map = self.add_routes(gtfs);
+        let shape_id_map = self.add_shapes(gtfs);
         let service_id_map = self.add_calendar(gtfs);
         let stop_times_map = self.group_stop_times_by_trip(gtfs, &stop_id_map);
         let trip_patterns_map = self.create_trip_patterns(&stop_times_map);

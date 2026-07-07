@@ -109,7 +109,7 @@ where
                 &self.graph,
                 forward,
                 Some(backward),
-                AlwaysForward::default(),
+                AlwaysForward,
                 EndToEnd {
                     source_id,
                     target_id,

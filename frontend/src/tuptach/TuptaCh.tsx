@@ -2,7 +2,13 @@ import "../core/Common.css";
 import "./TuptaCh.css";
 import { DeckOverlay } from "@deck.gl-community/leaflet";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
-import { useMap, MapContainer, TileLayer, useMapEvents } from "react-leaflet";
+import {
+  useMap,
+  MapContainer,
+  TileLayer,
+  useMapEvents,
+  GeoJSON,
+} from "react-leaflet";
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import type {
@@ -17,6 +23,8 @@ import type {
 } from "./presentation";
 import Slider from "@mui/material/Slider";
 import Select from "react-select";
+import type { GeoJsonObject } from "geojson";
+import L from "leaflet";
 
 type Phase =
   | "SelectRoutingNetwork"
@@ -77,6 +85,26 @@ type GraphProps = {
   target: QueryPoint | null;
   pendingPoint: QueryPoint | null;
 };
+
+function PolygonComponent({ polygon }: { polygon: GeoJsonObject | null }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (polygon !== null) {
+      const layer = L.geoJSON(polygon);
+      map.fitBounds(layer.getBounds());
+    }
+  }, [map, polygon]);
+
+  return polygon !== null ? (
+    <GeoJSON
+      data={polygon}
+      style={{ fillOpacity: 0.1, weight: 1, color: "#3388ff" }}
+    />
+  ) : (
+    <></>
+  );
+}
 
 function GraphComponent({
   mapPoints,
@@ -527,6 +555,9 @@ function TuptaCh() {
   const [routingNetworkName, setRoutingNetworkName] = useState<string | null>(
     null,
   );
+  const [numVertices, setNumVertices] = useState<number | null>(null);
+  const [numEdges, setNumEdges] = useState<number | null>(null);
+  const [polygon, setPolygon] = useState<GeoJsonObject | null>(null);
 
   const [selecting, setSelecting] = useState<"source" | "target" | null>(null);
   const [pendingPoint, setPendingPoint] = useState<QueryPoint | null>(null);
@@ -553,6 +584,7 @@ function TuptaCh() {
   }
 
   const [phase, setPhase] = useState<Phase>("SelectRoutingNetwork");
+  const [progress, setProgress] = useState<string | null>(null);
 
   const [numStepsInProgress, setNumStepsInProgress] = useState<number>(0);
 
@@ -592,10 +624,15 @@ function TuptaCh() {
             );
             break;
           case "RoutingNetworkReady":
+            setNumVertices(control_event.num_vertices);
+            setNumEdges(control_event.num_edges);
+            setPolygon(control_event.polygon);
             setPhase("SelectAlgorithm");
+            setProgress(null);
             break;
           case "PreprocessingReady":
             setPhase("Preprocessing");
+            setProgress(null);
             break;
           case "PreprocessingDone":
             setPhase("SelectQuery");
@@ -666,6 +703,10 @@ function TuptaCh() {
               width: action.mode === "Source" ? 3 : 1,
             });
             break;
+
+          case "Progress":
+            setProgress(`${action.current} / ${action.total}`);
+            break;
         }
       }
     };
@@ -683,6 +724,7 @@ function TuptaCh() {
     if (newRoutingNetworkName !== routingNetworkName) {
       clear();
       setRoutingNetworkName(newRoutingNetworkName);
+      setPolygon(null);
       send({
         type: "SelectRoutingNetwork",
         routing_network_name: newRoutingNetworkName,
@@ -713,7 +755,12 @@ function TuptaCh() {
         )}
 
         {phaseOrder[phase] >= phaseOrder["SelectAlgorithm"] && (
-          <AlgorithmSelector onSelect={handleAlgorithmSelect} />
+          <>
+            <h6>
+              {numVertices ?? 0} vertices, {numEdges ?? 0} edges
+            </h6>
+            <AlgorithmSelector onSelect={handleAlgorithmSelect} />
+          </>
         )}
 
         {phase === "Preprocessing" && (
@@ -774,6 +821,8 @@ function TuptaCh() {
             )}
           </>
         )}
+
+        {progress !== null && <div>Progress: {progress}</div>}
       </div>
 
       <MapContainer
@@ -796,6 +845,7 @@ function TuptaCh() {
           target={target}
           pendingPoint={pendingPoint}
         />
+        <PolygonComponent polygon={polygon} />
       </MapContainer>
     </div>
   );

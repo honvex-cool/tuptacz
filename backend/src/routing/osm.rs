@@ -18,7 +18,22 @@ where
     let graph_path_buf = directory_path.join("graph.bin");
     let graph_path = graph_path_buf.as_path();
 
-    load_graph_elements(osm_path, graph_path).map(RoutingNetwork::new)
+    let polygon_path_buf = directory_path.join("polygon.json");
+    let polygon_path = polygon_path_buf.as_path();
+
+    let graph_elements = load_graph_elements(osm_path, graph_path)?;
+
+    eprintln!("Reading polygon from {}", polygon_path.display());
+    let polygon = {
+        let file = File::open(polygon_path)?;
+        let mut reader = BufReader::new(file);
+        serde_json::from_reader(&mut reader)?
+    };
+    eprintln!("Polygon loaded");
+
+    let routing_network = RoutingNetwork::new(graph_elements, polygon);
+
+    Ok(routing_network)
 }
 
 pub fn load_graph_elements<PO, PG>(
@@ -41,6 +56,8 @@ where
         let mut reader = BufReader::new(file);
         bincode::deserialize_from(&mut reader).map_err(io::Error::other)?
     };
+
+    eprintln!("Graph elements loaded");
 
     Ok(graph_elements)
 }
@@ -151,9 +168,8 @@ fn is_road(edge: &osm4routing::Edge) -> bool {
 }
 
 fn is_car_accessible(car_accessibility: osm4routing::CarAccessibility) -> bool {
-    match car_accessibility {
-        osm4routing::CarAccessibility::Forbidden => false,
-        osm4routing::CarAccessibility::Unknown => false,
-        _ => true,
-    }
+    !matches!(
+        car_accessibility,
+        osm4routing::CarAccessibility::Forbidden | osm4routing::CarAccessibility::Unknown,
+    )
 }

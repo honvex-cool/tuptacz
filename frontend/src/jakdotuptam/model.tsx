@@ -1,27 +1,3 @@
-class ServiceTime {
-  readonly secondsSinceMidnight: number;
-
-  constructor(secondsSinceMidnight: number) { this.secondsSinceMidnight = secondsSinceMidnight; }
-
-  get hours() {
-    return Math.floor(this.secondsSinceMidnight / 3600);
-  }
-
-  get minutes() {
-    return Math.floor(this.secondsSinceMidnight % 3600 / 60);
-  }
-
-  get seconds() {
-    return this.secondsSinceMidnight % 60;
-  }
-
-  durationTo(other: ServiceTime) {
-    return other.secondsSinceMidnight - this.secondsSinceMidnight;
-  }
-
-
-}
-
 export type RouteType = "Bus" | "Tram";
 
 export type LatLng = {
@@ -77,15 +53,15 @@ export type Journey = {
 }
 
 export function legDepartureTime(leg: JourneyLeg) {
-  return leg.stops.at(0).arrival_time;
+  return leg.stops.at(0)!.arrival_time;
 }
 export function legArrivalTime(leg: JourneyLeg) {
-  return leg.stops.at(-1).arrival_time;
+  return leg.stops.at(-1)!.arrival_time;
 }
 
 export function journeyDepartureTime(journey: Journey) {
-  return legDepartureTime(journey.legs.at(0))
+  return legDepartureTime(journey.legs.at(0)!)
 }
 export function journeyArrivalTime(journey: Journey) {
-  return legArrivalTime(journey.legs.at(-1))
+  return legArrivalTime(journey.legs.at(-1)!)
 }

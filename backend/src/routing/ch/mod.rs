@@ -1,7 +1,7 @@
 use crate::graphs::EdgeDescriptor;
 
 pub mod contraction;
-pub mod query;
+pub mod algos;
 
 pub type Rank = usize;
 

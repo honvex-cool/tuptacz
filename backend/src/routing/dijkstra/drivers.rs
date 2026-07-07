@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::marker::PhantomData;
 
 use crate::graphs::{EdgeDescriptor, EdgeView, VertexView};
 use crate::routing::{Weight, Weighted};
@@ -146,9 +145,7 @@ where
 
     #[inline(always)]
     fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
-        let mut inner = self.get(vertex.id);
-        inner.set_distance(distance);
-        self.set(vertex.id, inner);
+        self.get_mut(vertex.id).set_distance(distance);
     }
 
     #[inline(always)]
@@ -158,9 +155,7 @@ where
 
     #[inline(always)]
     fn set_predecessor(&mut self, edge: EdgeView<V, E>) {
-        let mut inner = self.get(edge.end.id);
-        inner.set_predecessor(edge);
-        self.set(edge.end.id, inner);
+        self.get_mut(edge.end.id).set_predecessor(edge);
     }
 }
 
@@ -172,62 +167,59 @@ where
 }
 
 #[macro_export]
-macro_rules! delegate_distance_tracking {
-    ($type:ident<$vertex_generic:ident, $edge_generic:ident, $inner_generic:ident $(, $generic:ident)*>, $inner:ident) => {
-        impl<$vertex_generic, $edge_generic, $inner_generic, $($generic),*> PathTracker<$vertex_generic, $edge_generic> for $type<$vertex_generic, $edge_generic, $inner_generic, $($generic),*>
-        where
-            $inner_generic: PathTracker<$vertex_generic, $edge_generic>,
-        {
-            type Distance = $inner_generic::Distance;
+macro_rules! delegate_path_tracking {
+    ($vertex_generic:ident, $edge_generic:ident, $distance_ty:ty, $inner:ident) => {
+        type Distance = $distance_ty;
 
-            #[inline(always)]
-            fn get_distance(&self, vertex: VertexView<$vertex_generic>) -> Self::Distance {
-                self.$inner.get_distance(vertex)
-            }
+        #[inline(always)]
+        fn get_distance(&self, vertex: $crate::graphs::VertexView<$vertex_generic>) -> Self::Distance {
+            self.$inner.get_distance(vertex)
+        }
 
-            #[inline(always)]
-            fn set_distance(&mut self, vertex: VertexView<$vertex_generic>, distance: Self::Distance) {
-                self.$inner.set_distance(vertex, distance);
-            }
+        #[inline(always)]
+        fn set_distance(&mut self, vertex: $crate::graphs::VertexView<$vertex_generic>, distance: Self::Distance) {
+            self.$inner.set_distance(vertex, distance);
+        }
 
-            #[inline(always)]
-            fn get_predecessor(&self, vertex: VertexView<$vertex_generic>) -> Option<EdgeDescriptor> {
-                self.$inner.get_predecessor(vertex)
-            }
+        #[inline(always)]
+        fn get_predecessor(&self, vertex: $crate::graphs::VertexView<$vertex_generic>) -> Option<$crate::graphs::EdgeDescriptor> {
+            self.$inner.get_predecessor(vertex)
+        }
 
-            #[inline(always)]
-            fn set_predecessor(&mut self, edge: EdgeView<$vertex_generic, $edge_generic>) {
-                self.$inner.set_predecessor(edge);
-            }
+        #[inline(always)]
+        fn set_predecessor(&mut self, edge: $crate::graphs::EdgeView<$vertex_generic, $edge_generic>) {
+            self.$inner.set_predecessor(edge);
         }
     };
 }
 
-pub struct LimitedDistanceDriver<V, E, D>
-where
-    D: PathTracker<V, E>,
-{
+pub struct LimitedDistanceDriver<D, W> {
     inner: D,
-    limit: D::Distance,
+    limit: W,
 }
 
-impl<V, E, D> LimitedDistanceDriver<V, E, D>
+impl<D, W> LimitedDistanceDriver<D, W>
 where
-    D: PathTracker<V, E>,
+    W: Weight,
 {
-    pub fn new(limit: D::Distance, inner: D) -> Self {
+    pub fn new(limit: W, inner: D) -> Self {
         Self { limit, inner }
     }
 
     #[inline(always)]
-    fn is_good(&self, weight: D::Distance) -> bool {
+    fn is_good(&self, weight: W) -> bool {
         weight <= self.limit
     }
 }
 
-delegate_distance_tracking!(LimitedDistanceDriver<V, E, D>, inner);
+impl<V, E, D> PathTracker<V, E> for LimitedDistanceDriver<D, D::Distance>
+where
+    D: PathTracker<V, E>,
+{
+    delegate_path_tracking!(V, E, D::Distance, inner);
+}
 
-impl<V, E, D> Driver<V, E> for LimitedDistanceDriver<V, E, D>
+impl<V, E, D> Driver<V, E> for LimitedDistanceDriver<D, D::Distance>
 where
     D: Driver<V, E>,
     E: Weighted,
@@ -235,12 +227,12 @@ where
     #[inline(always)]
     fn should_consider_edge(&self, edge: EdgeView<V, E>) -> bool {
         let hypothetical_weight = self.get_distance(edge.start) + edge.weight();
-        self.is_good(hypothetical_weight)
+        self.is_good(hypothetical_weight) && self.inner.should_consider_edge(edge)
     }
 
     #[inline(always)]
-    fn should_consider_vertex(&self, _vertex: VertexView<V>, total_distance: E::Weight) -> bool {
-        self.is_good(total_distance)
+    fn should_consider_vertex(&self, vertex: VertexView<V>, total_distance: E::Weight) -> bool {
+        self.is_good(total_distance) && self.inner.should_consider_vertex(vertex, total_distance)
     }
 
     #[inline(always)]
@@ -249,64 +241,61 @@ where
     }
 }
 
-pub struct LimitedVisitsDriver<V, E, D>
-where
-    D: PathTracker<V, E>,
-{
+pub struct LimitedVisitsDriver<D> {
     limit: usize,
     num_visits: usize,
     inner: D,
-    _phantom: PhantomData<(V, E)>,
 }
 
-impl<V, E, D> LimitedVisitsDriver<V, E, D>
-where
-    D: PathTracker<V, E>,
-{
+impl<D> LimitedVisitsDriver<D> {
     pub fn new(limit: usize, inner: D) -> Self {
         Self {
             limit,
             num_visits: 0,
             inner,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<V, E, D> LimitedVisitsDriver<V, E, D>
+impl<V, E, D> PathTracker<V, E> for LimitedVisitsDriver<D>
 where
     D: PathTracker<V, E>,
 {
-    #[inline(always)]
-    fn is_good(&self, vertex: VertexView<V>) -> bool {
-        if self.num_visits == self.limit {
-            self.get_distance(vertex) != D::Distance::infinity()
-        } else {
-            self.num_visits < self.limit
-        }
-    }
+    delegate_path_tracking!(V, E, D::Distance, inner);
 }
 
-delegate_distance_tracking!(LimitedVisitsDriver<V, E, D>, inner);
-
-impl<V, E, D> Driver<V, E> for LimitedVisitsDriver<V, E, D>
+impl<V, E, D> Driver<V, E> for LimitedVisitsDriver<D>
 where
     D: Driver<V, E>,
     E: Weighted,
 {
     #[inline(always)]
     fn should_consider_edge(&self, edge: EdgeView<V, E>) -> bool {
-        self.is_good(edge.end)
+        is_good(&self.inner, edge.end, self.num_visits, self.limit)
+            && self.inner.should_consider_edge(edge)
     }
 
     #[inline(always)]
     fn should_consider_vertex(&self, vertex: VertexView<V>, total_distance: E::Weight) -> bool {
-        self.is_good(vertex) && self.inner.should_consider_vertex(vertex, total_distance)
+        is_good(&self.inner, vertex, self.num_visits, self.limit)
+            && self.inner.should_consider_vertex(vertex, total_distance)
     }
 
     #[inline(always)]
     fn visit(&mut self, vertex: VertexView<V>) -> bool {
         self.num_visits += 1;
         self.num_visits < self.limit && self.inner.visit(vertex)
+    }
+}
+
+#[inline(always)]
+fn is_good<V, E, D>(driver: &D, vertex: VertexView<V>, num_visits: usize, limit: usize) -> bool
+where
+    D: PathTracker<V, E>,
+{
+    if num_visits == limit {
+        driver.get_distance(vertex) != D::Distance::infinity()
+    } else {
+        num_visits < limit
     }
 }

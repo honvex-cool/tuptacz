@@ -57,7 +57,7 @@ fn enrich_leg(transit_info: &TransitInfo, leg: &Leg) -> RichJourneyLeg {
         trip_id: leg.trip_id,
         route_name: route.short_name.clone(),
         route_type: route.route_type,
-        stops: stops,
+        stops,
         walked_distance: leg.walked_distance
     }
 }

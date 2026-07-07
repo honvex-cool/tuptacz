@@ -1,3 +1,5 @@
+import type { GeoJsonObject } from "geojson";
+
 export interface LatLng {
   latitude: number;
   longitude: number;
@@ -34,7 +36,13 @@ export interface HighlightEdge {
   mode: HighlightMode;
 }
 
-export type GraphAction = HighlightVertex | HighlightEdge;
+export interface Progress {
+  type: "Progress";
+  current: number;
+  total: number;
+}
+
+export type GraphAction = HighlightVertex | HighlightEdge | Progress;
 
 export interface AlgoEvent {
   action: GraphAction;
@@ -53,6 +61,9 @@ export interface AvailableRoutingNetworks {
 
 export interface RoutingNetworkReady {
   type: "RoutingNetworkReady";
+  num_vertices: number;
+  num_edges: number;
+  polygon: GeoJsonObject;
 }
 
 export interface PreprocessingReady {

@@ -1,18 +1,24 @@
-use std::{cell::Cell, cmp::Ordering};
-
 use crate::{
-    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView}, routing::{
-        Weight, Weighted, ch::{Rank, ShortcutBreakdown}, dijkstra::{
-            self, BidirectionalDrivenDijkstra, Controller, Search, drivers::{Driver, LimitedDistanceDriver, PathTracker}, heuristics::ZeroHeuristic, policies::{AlwaysForward, NeverEarly},
-        }, presentation::GraphEvent,
-    }, utils::{
+    graphs::{EdgeDescriptor, EdgeView, Graph, VertexId, VertexView},
+    routing::{
+        Weight, Weighted,
+        ch::{Rank, ShortcutBreakdown},
+        dijkstra::{
+            self, BidirectionalDrivenDijkstra, Controller, Search,
+            drivers::{Driver, LimitedDistanceDriver, PathTracker},
+            heuristics::ZeroHeuristic,
+            policies::{AlwaysForward, NeverEarly},
+        },
+        presentation::{GraphEvent, consider_progress_event},
+    },
+    utils::{
         algo::{self, EventClient, InteractiveAlgo, NullClient},
         pq::{self, NullTracker, Pq},
-        staged::{Epoch, STARTING_EPOCH},
+        staged::{Stageable, Staged},
     },
 };
 
-pub type Priority = f64;
+pub type Priority = i64;
 
 struct Shortcut<G>
 where
@@ -30,6 +36,12 @@ pub struct Config {
     pub allowed_time_between_global_updates: usize,
 }
 
+#[allow(type_alias_bounds)]
+type Vs<W>
+where
+    W: Weighted,
+= VertexState<W::Weight>;
+
 pub struct Contraction<G>
 where
     G: Graph,
@@ -38,9 +50,14 @@ where
     graph: G,
     config: Config,
 
+    ranks: Vec<Rank>,
+
     queue: Queue,
 
-    state: State<G>,
+    num_original_edges: usize,
+    breakdowns: Vec<ShortcutBreakdown>,
+
+    vertex_states: Stageable<Vs<G::E>>,
     since_global_update: Stats,
 
     total_num_contractions: usize,
@@ -52,15 +69,22 @@ where
     G::E: Weighted,
 {
     #[inline(always)]
-    fn new(graph: G, config: Config) -> Self {
+    pub fn new(graph: G, config: Config) -> Self {
         let num_vertices = graph.num_vertices();
+        let num_edges = graph.num_edges();
 
         let mut algo = Self {
             graph,
             config,
 
+            ranks: vec![Rank::MAX; num_vertices],
+
+            num_original_edges: num_edges,
+            breakdowns: vec![],
+
+            vertex_states: Stageable::new(num_vertices),
+
             queue: Pq::with_index_tracker(vec![None; num_vertices]),
-            state: State::with_size(num_vertices),
             since_global_update: Stats::default(),
 
             total_num_contractions: 0,
@@ -77,10 +101,10 @@ where
     G::E: Weighted,
     C: EventClient<GraphEvent<G::V, G::E>>,
 {
-    type Result = (G, Vec<Rank>);
+    type Result = (G, Vec<Rank>, usize, Vec<ShortcutBreakdown>);
 
     #[inline(always)]
-    fn step(&mut self, _client: &mut C) -> bool {
+    fn step(&mut self, client: &mut C) -> bool {
         let Some((id, _)) = self.queue.pop() else {
             return false;
         };
@@ -94,26 +118,33 @@ where
 
         self.since_global_update.time += 1;
 
+        consider_progress_event(
+            self.total_num_contractions,
+            self.graph.num_vertices(),
+            client,
+        );
+
         true
     }
 
     fn result(self) -> Self::Result {
-        (self.graph, self.state.ranks)
+        assert!(!self.ranks.contains(&Rank::MAX));
+        (
+            self.graph,
+            self.ranks,
+            self.num_original_edges,
+            self.breakdowns,
+        )
     }
 
     fn result_dyn(self: Box<Self>) -> Self::Result {
-        (self.graph, self.state.ranks)
-    }
-}
-
-#[derive(PartialEq, PartialOrd, Default)]
-struct OrdPriority(Priority);
-
-impl Eq for OrdPriority {}
-
-impl Ord for OrdPriority {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+        assert!(!self.ranks.contains(&Rank::MAX));
+        (
+            self.graph,
+            self.ranks,
+            self.num_original_edges,
+            self.breakdowns,
+        )
     }
 }
 
@@ -134,7 +165,7 @@ impl Stats {
     }
 }
 
-type Queue = Pq<VertexId, OrdPriority, pq::Min, Vec<Option<usize>>>;
+type Queue = Pq<VertexId, Priority, pq::Min, Vec<Option<usize>>>;
 
 impl<G> Contraction<G>
 where
@@ -144,15 +175,16 @@ where
     fn contract(&mut self, id: VertexId, shortcuts: Option<Vec<Shortcut<G>>>) {
         self.save_rank(id);
 
-        let shortcuts = shortcuts
-            .unwrap_or_else(|| Self::calculate_shortcuts(id, &self.graph, &mut self.state).0);
+        let shortcuts = shortcuts.unwrap_or_else(|| {
+            Self::calculate_shortcuts(id, &self.graph, &self.ranks, &mut self.vertex_states).0
+        });
         self.insert_shortcuts(&shortcuts);
 
         self.update_priorities_post_contraction(id);
     }
 
     fn save_rank(&mut self, id: VertexId) {
-        self.state.ranks[id] = self.total_num_contractions;
+        self.ranks[id] = self.total_num_contractions;
     }
 
     fn insert_shortcuts(&mut self, shortcuts: &[Shortcut<G>]) {
@@ -163,18 +195,20 @@ where
             let edge = shortcut.weight.into();
             self.graph
                 .add_edge(shortcut.start_id, shortcut.end_id, edge);
+            self.breakdowns.push(shortcut.breakdown);
         }
     }
 
     fn calculate_shortcuts(
         id: VertexId,
         graph: &G,
-        state: &mut State<G>,
+        ranks: &[Rank],
+        vertex_states: &mut Stageable<Vs<G::E>>,
     ) -> (Vec<Shortcut<G>>, usize) {
         let outgoing_edges: Vec<_> =
-            to_uncontracted(graph.iter_outgoing_edges(id), &state.ranks).collect();
+            to_uncontracted(graph.iter_outgoing_edges(id), ranks).collect();
 
-        let incoming_edges = from_uncontracted(graph.iter_incoming_edges(id), &state.ranks);
+        let incoming_edges = from_uncontracted(graph.iter_incoming_edges(id), ranks);
 
         if outgoing_edges.is_empty() {
             return (vec![], incoming_edges.count());
@@ -183,7 +217,7 @@ where
         let max_outgoing_weight = outgoing_edges
             .iter()
             .map(|edge| edge.weight())
-            .max_by(|lhs, rhs| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal))
+            .max()
             .unwrap();
 
         let mut shortcuts = vec![];
@@ -197,19 +231,11 @@ where
 
             let distance_bound = incoming_weight + max_outgoing_weight;
 
-            let current_epoch = state.advance_epoch();
-
-            let driver = LocalDijkstraDriver::new(
-                current_epoch,
-                &outgoing_edges,
-                &mut state.distances,
-                &mut state.should_be_visited,
-                &state.time_stamps,
-                &state.ranks,
-            );
+            let mut local_vertex_states = vertex_states.stage();
+            let driver =
+                LocalDijkstraDriver::new(id, &outgoing_edges, ranks, &mut local_vertex_states);
 
             let driver = LimitedDistanceDriver::new(distance_bound, driver);
-
             let search = Search {
                 id: incoming_edge.start.id,
                 driver,
@@ -224,7 +250,7 @@ where
             let direction_policy = AlwaysForward;
             let termination_policy = NeverEarly;
 
-            let mut client = NullClient::default();
+            let mut client = NullClient;
             let mut dijkstra = BidirectionalDrivenDijkstra::new(
                 graph,
                 forward,
@@ -236,8 +262,12 @@ where
             algo::complete(&mut dijkstra, &mut client);
 
             for outgoing_edge in &outgoing_edges {
+                if incoming_edge.start.id == outgoing_edge.end.id {
+                    continue;
+                }
                 let distance_through_contracted = incoming_weight + outgoing_edge.weight();
-                if state.distances[outgoing_edge.end.id].get() > distance_through_contracted {
+                let found_distance = local_vertex_states.get(outgoing_edge.end.id).distance;
+                if found_distance > distance_through_contracted {
                     let breakdown = [incoming_edge.descriptor(), outgoing_edge.descriptor()];
                     shortcuts.push(Shortcut {
                         start_id: incoming_edge.start.id,
@@ -265,17 +295,18 @@ where
         id: VertexId,
     ) -> (Option<Priority>, Option<Vec<Shortcut<G>>>) {
         let (current_priority, shortcuts) =
-            Self::calculate_priority(id, &self.graph, &mut self.state);
+            Self::calculate_priority(id, &self.graph, &self.ranks, &mut self.vertex_states);
 
-        let priority_to_update = self.queue.peek().and_then(|(_, &OrdPriority(priority))| {
-            (current_priority > priority).then_some(current_priority)
-        });
+        let priority_to_update = self
+            .queue
+            .peek()
+            .and_then(|(_, &priority)| (current_priority > priority).then_some(current_priority));
 
         (priority_to_update, shortcuts)
     }
 
     fn lazy_update_priority(&mut self, id: VertexId, priority: Priority) {
-        self.queue.push(id, OrdPriority(priority));
+        self.queue.push_or_update(id, priority);
         self.since_global_update.num_lazy_updates += 1;
     }
 
@@ -294,7 +325,8 @@ where
         Self::refresh_priorities(
             self.graph.iter_vertices(),
             &self.graph,
-            &mut self.state,
+            &self.ranks,
+            &mut self.vertex_states,
             &mut self.queue,
         );
 
@@ -305,13 +337,15 @@ where
         Self::refresh_priorities(
             self.graph.iter_outgoing_edges(id).map(|edge| edge.end),
             &self.graph,
-            &mut self.state,
+            &self.ranks,
+            &mut self.vertex_states,
             &mut self.queue,
         );
         Self::refresh_priorities(
             self.graph.iter_incoming_edges(id).map(|edge| edge.start),
             &self.graph,
-            &mut self.state,
+            &self.ranks,
+            &mut self.vertex_states,
             &mut self.queue,
         );
     }
@@ -319,13 +353,15 @@ where
     fn refresh_priorities<'g>(
         vertices: impl Iterator<Item = VertexView<'g, G::V>>,
         graph: &'g G,
-        state: &mut State<G>,
+        ranks: &[Rank],
+        vertex_states: &mut Stageable<Vs<G::E>>,
         queue: &mut Queue,
     ) {
         for vertex in vertices {
-            if is_uncontracted(vertex.id, &state.ranks) {
-                let (current_priority, _) = Self::calculate_priority(vertex.id, graph, state);
-                queue.push_or_update(vertex.id, OrdPriority(current_priority));
+            if is_uncontracted(vertex.id, ranks) {
+                let (current_priority, _) =
+                    Self::calculate_priority(vertex.id, graph, ranks, vertex_states);
+                queue.push_or_update(vertex.id, current_priority);
             }
         }
     }
@@ -333,9 +369,11 @@ where
     fn calculate_priority(
         id: VertexId,
         graph: &G,
-        state: &mut State<G>,
+        ranks: &[Rank],
+        vertex_states: &mut Stageable<Vs<G::E>>,
     ) -> (Priority, Option<Vec<Shortcut<G>>>) {
-        let (shortcuts, num_removed_edges) = Self::calculate_shortcuts(id, graph, state);
+        let (shortcuts, num_removed_edges) =
+            Self::calculate_shortcuts(id, graph, ranks, vertex_states);
 
         let priority = (shortcuts.len() as Priority) - (num_removed_edges as Priority);
 
@@ -372,107 +410,68 @@ fn is_uncontracted(id: VertexId, ranks: &[Rank]) -> bool {
     ranks[id] == Rank::MAX
 }
 
-struct State<G>
-where
-    G: Graph,
-    G::E: Weighted,
-{
-    epoch: Cell<Epoch>,
-    distances: Vec<Cell<<G::E as Weighted>::Weight>>,
-    ranks: Vec<Rank>,
-    time_stamps: Vec<Cell<Epoch>>,
-    should_be_visited: Vec<Cell<bool>>,
+#[derive(Debug, Clone, Copy)]
+struct VertexState<W> {
+    distance: W,
+    should_be_visited: bool,
 }
 
-impl<G> State<G>
+impl<W> Default for VertexState<W>
 where
-    G: Graph,
-    G::E: Weighted,
+    W: Weight,
 {
-    fn advance_epoch(&self) -> Epoch {
-        self.epoch.update(|epoch| epoch + 1);
-        self.epoch.get()
-    }
-
-    fn with_size(size: usize) -> Self {
+    fn default() -> Self {
         Self {
-            epoch: Cell::new(STARTING_EPOCH),
-            distances: vec![Cell::new(<G::E as Weighted>::Weight::infinity()); size],
-            ranks: vec![Rank::MAX; size],
-            time_stamps: vec![Cell::new(STARTING_EPOCH); size],
-            should_be_visited: vec![Cell::new(false); size],
+            distance: W::infinity(),
+            should_be_visited: false,
         }
     }
 }
 
-struct LocalDijkstraDriver<'s, W> {
-    current_epoch: Epoch,
-    distances: &'s mut [Cell<W>],
-    should_be_visited: &'s mut [Cell<bool>],
-    time_stamps: &'s [Cell<Epoch>],
-    ranks: &'s [Rank],
+struct LocalDijkstraDriver<'s, 'g, W> {
+    center_id: VertexId,
+    ranks: &'g [Rank],
+    vertex_states: &'s mut Staged<'g, VertexState<W>>,
     num_to_visit: usize,
     num_visited: usize,
 }
 
-impl<'s, W> LocalDijkstraDriver<'s, W>
+impl<'s, 'g, W> LocalDijkstraDriver<'s, 'g, W>
 where
     W: Weight,
 {
     fn new<V, E>(
-        current_epoch: Epoch,
+        center_id: VertexId,
         outgoing_edges: &[EdgeView<V, E>],
-        distances: &'s mut [Cell<W>],
-        should_be_visited: &'s mut [Cell<bool>],
-        time_stamps: &'s [Cell<Epoch>],
-        ranks: &'s [Rank],
+        ranks: &'g [Rank],
+        vertex_states: &'s mut Staged<'g, VertexState<W>>,
     ) -> Self {
-        let driver = Self {
-            current_epoch,
-            distances,
-            should_be_visited,
-            time_stamps,
+        for edge in outgoing_edges {
+            vertex_states.get_mut(edge.end.id).should_be_visited = true;
+        }
+
+        Self {
+            center_id,
             ranks,
+            vertex_states,
             num_to_visit: outgoing_edges.len(),
             num_visited: 0,
-        };
-
-        for edge in outgoing_edges {
-            driver.refresh(edge.end.id);
-            driver.should_be_visited[edge.end.id].set(true);
-        }
-
-        driver
-    }
-}
-
-impl<'s, W> LocalDijkstraDriver<'s, W>
-where
-    W: Weight,
-{
-    fn refresh(&self, id: VertexId) {
-        if self.time_stamps[id].get() < self.current_epoch {
-            self.distances[id].set(W::infinity());
-            self.should_be_visited[id].set(false);
-            self.time_stamps[id].set(self.current_epoch)
         }
     }
 }
 
-impl<'s, V, E, W> PathTracker<V, E> for LocalDijkstraDriver<'s, W>
+impl<'s, 'g, V, E, W> PathTracker<V, E> for LocalDijkstraDriver<'s, 'g, W>
 where
     W: Weight,
 {
     type Distance = W;
 
     fn get_distance(&self, vertex: VertexView<V>) -> Self::Distance {
-        self.refresh(vertex.id);
-        self.distances[vertex.id].get()
+        self.vertex_states.get(vertex.id).distance
     }
 
     fn set_distance(&mut self, vertex: VertexView<V>, distance: Self::Distance) {
-        self.refresh(vertex.id);
-        self.distances[vertex.id].set(distance);
+        self.vertex_states.get_mut(vertex.id).distance = distance;
     }
 
     fn get_predecessor(&self, _vertex: VertexView<V>) -> Option<EdgeDescriptor> {
@@ -481,23 +480,22 @@ where
     fn set_predecessor(&mut self, _edge: EdgeView<V, E>) {}
 }
 
-impl<'s, V, E> Driver<V, E> for LocalDijkstraDriver<'s, E::Weight>
+impl<'s, 'g, V, E> Driver<V, E> for LocalDijkstraDriver<'s, 'g, E::Weight>
 where
     E: Weighted,
 {
     fn should_consider_edge(&self, edge: EdgeView<V, E>) -> bool {
-        self.refresh(edge.end.id);
-        is_uncontracted(edge.end.id, self.ranks)
+        edge.start.id != self.center_id
+            && edge.end.id != self.center_id
+            && is_uncontracted(edge.end.id, self.ranks)
     }
 
     fn should_consider_vertex(&self, vertex: VertexView<V>, _total_weight: E::Weight) -> bool {
-        self.refresh(vertex.id);
-        is_uncontracted(vertex.id, self.ranks)
+        vertex.id != self.center_id && is_uncontracted(vertex.id, self.ranks)
     }
 
     fn visit(&mut self, vertex: VertexView<V>) -> bool {
-        self.refresh(vertex.id);
-        if self.should_be_visited[vertex.id].get() {
+        if self.vertex_states.get(vertex.id).should_be_visited {
             self.num_visited += 1;
         }
         self.num_visited <= self.num_to_visit

@@ -1,6 +1,8 @@
 use futures_util::{SinkExt, StreamExt};
+use itertools::Itertools;
 use ouroboros::self_referencing;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::{
@@ -8,9 +10,10 @@ use crate::{
     graphs::{Path, VertexId},
     routing::{
         a_star::algos::a_star,
+        ch::{algos::ch, contraction::Config},
         dijkstra::algos::dijkstra,
         model::{LatLng, Road, RoutingInfo, RoutingNetwork},
-        presentation::GraphEvent,
+        presentation::{GraphAction, GraphEvent},
     },
     utils::algo::{self, EventClient, InteractiveAlgo},
 };
@@ -21,7 +24,11 @@ pub enum ControlEvent {
     AvailableRoutingNetworks {
         routing_network_names: Vec<String>,
     },
-    RoutingNetworkReady,
+    RoutingNetworkReady {
+        num_vertices: usize,
+        num_edges: usize,
+        polygon: Value,
+    },
     PreprocessingReady,
     PreprocessingDone,
     QueryReady,
@@ -91,7 +98,20 @@ impl SimpleEventClient<LatLng, Road> {
 
     async fn flush(&mut self, sender: &mut Sender) {
         for event in std::mem::take(&mut self.events) {
-            algo_event(event, sender).await;
+            if self.is_enabled
+                || matches!(
+                    event,
+                    GraphEvent {
+                        action: GraphAction::Progress {
+                            current: _,
+                            total: _
+                        },
+                        comment: _
+                    }
+                )
+            {
+                algo_event(event, sender).await;
+            }
         }
     }
 }
@@ -143,7 +163,7 @@ impl<'r> LocalState<'r> {
     }
 
     async fn handle_frontend_event(&mut self, frontend_event: FrontendEvent, sender: &mut Sender) {
-        // eprintln!("Received: {:?}", frontend_event);
+        eprintln!("Received: {:?}", frontend_event);
 
         let mut is_change_preprocessing_to_queryable = false;
         let mut is_query_done = false;
@@ -153,8 +173,19 @@ impl<'r> LocalState<'r> {
                 routing_network_name,
             } => {
                 self.routing_network = self.routing_info.get(&routing_network_name);
-                self.algo_state = AlgoState::None;
-                control_event(ControlEvent::RoutingNetworkReady, sender).await;
+                if let Some(routing_network) = self.routing_network {
+                    let (num_vertices, num_edges) = routing_network.size();
+                    self.algo_state = AlgoState::None;
+                    control_event(
+                        ControlEvent::RoutingNetworkReady {
+                            num_vertices,
+                            num_edges,
+                            polygon: routing_network.polygon.clone(),
+                        },
+                        sender,
+                    )
+                    .await;
+                }
             }
             FrontendEvent::SelectAlgorithm {
                 algorithm_selection,
@@ -209,9 +240,19 @@ impl<'r> LocalState<'r> {
                 if let AlgoState::Query(running_query) = &mut self.algo_state {
                     is_query_done = true;
                     let mut client = Client::new(false);
-                    running_query.with_query_mut(|query| {
-                        algo::complete_dyn(query.as_mut().unwrap().as_mut(), &mut client)
-                    });
+                    loop {
+                        let is_running = running_query.with_query_mut(|query| {
+                            if let Some(query) = query {
+                                query.step(&mut client)
+                            } else {
+                                false
+                            }
+                        });
+                        client.flush(sender).await;
+                        if !is_running {
+                            break;
+                        }
+                    }
                 }
             }
             FrontendEvent::ClosestVertexRequest { name, lat_lng } => {
@@ -230,6 +271,7 @@ impl<'r> LocalState<'r> {
                 let engine = preprocessing.result_dyn();
                 self.algo_state = AlgoState::Queryable(engine);
                 control_event(ControlEvent::PreprocessingDone, sender).await;
+                eprintln!("Preprocessing done");
             }
         }
 
@@ -240,6 +282,7 @@ impl<'r> LocalState<'r> {
                 let engine = running_query.into_heads().engine;
                 self.algo_state = AlgoState::Queryable(engine);
                 control_event(ControlEvent::QueryDone { path }, sender).await;
+                eprintln!("Query done");
             }
         }
     }
@@ -253,7 +296,13 @@ impl<'r> LocalState<'r> {
             AlgorithmSelection::AStar { is_bidirectional } => {
                 a_star(graph_elements, is_bidirectional)
             }
-            AlgorithmSelection::ContractionHierarchies => todo!(),
+            AlgorithmSelection::ContractionHierarchies => ch(
+                graph_elements,
+                Config {
+                    allowed_lazy_updates_to_contractions_ratio: 3.0,
+                    allowed_time_between_global_updates: usize::MAX,
+                },
+            ),
         }
     }
 }
@@ -274,7 +323,12 @@ async fn socket_loop(mut sender: Sender, mut receiver: Receiver, routing_info: &
 
     control_event(
         ControlEvent::AvailableRoutingNetworks {
-            routing_network_names: routing_info.keys().cloned().collect(),
+            routing_network_names: routing_info
+                .iter()
+                .sorted_by_key(|&(_, rn)| rn.size())
+                .map(|(key, _)| key)
+                .cloned()
+                .collect(),
         },
         &mut sender,
     )
@@ -303,8 +357,8 @@ async fn control_event(event: ControlEvent, sender: &mut Sender) {
 }
 
 async fn server_event(event: ServerEvent, sender: &mut Sender) {
-    // eprintln!("Sent: {:?}", event);
+    eprintln!("Sent: {:?}", event);
     let serialized = serde_json::to_string(&event).unwrap();
-    let message = Message::Text(serialized.into());
+    let message = Message::Text(serialized);
     sender.send(message).await.unwrap();
 }

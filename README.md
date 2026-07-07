@@ -57,23 +57,40 @@ Alternatively you can follow the below instructions to run the frontend and the 
 
 ## AI Usage
 
-AI was mostly used for prototyping, debugging, and reviewing ideas, rather than vibe-coding the app.
+AI was mostly used for discussion, learning, prototyping, debugging, and reviewing ideas, rather than vibe-coding the app.
 
 The majority of the code was written directly by hand, with AI helping with minor snippets.
 
 Parts of the frontend for TuptaCH were vibecoded.
 
-The hedgehog logo was drawn by hand (with some inspirations from the internet) :) 
+The hedgehog logo was drawn by hand (with some inspirations from the internet) :)
 
 ## Ideas, experiments, and failures
 
 ### TuptaCH
 
+#### Framework
+
 Although the visualization is rather slow (due to the event generation, communication, and rendering overheads), the underlying framework has potential for good performance. Some flexible zero-cost or nearly-zero-cost Rust abstractions were created:
-- immutable vertex and edge views that can be implemented for any underlying graph representation
-- reusable memory pools using the epoch technique - implemented using Rust's `Cell<T>` type which usually has the same hardware representation as the wrapped type but enables interior mutability
-- generic Dijkstra's algorithm, controllable with drivers and heuristics (which are monomorphized and aggressively inlined in most cases)
-- "preproceessing - pathfinder - query" pattern combining the flexibility of dynamic dispatch *between* phases with the performance of static dispatch *within* phase
+- Immutable vertex and edge views that can be implemented for any underlying graph representation
+- Reusable memory pools using the epoch technique - implemented using Rust's `Cell<T>` type which usually has the same hardware representation as the wrapped type but enables interior mutability
+- Generic Dijkstra's algorithm, controllable with drivers and heuristics (which are monomorphized and aggressively inlined in most cases)
+- "Preproceessing - Pathfinder - Query" pattern combining the flexibility of dynamic dispatch *between* phases with the performance of static dispatch *within* phase
+
+#### Resolved bugs
+
+In implementation of CH, two subtle bugs appeared:
+- The priority queue was implemented in a way that enabled it to be generic over whether it supports key updates or not. This is realized via an index tracker, provided by the user. However, during insertion, the index was not correctly updated. It caused some existing values to be reinserted with a different key, even in the version supporting key updates. This caused some vertices to be contracted multiple times, messing up the ranks.
+- Some drivers for the bounded Dijkstra's algorithm were supposed to decide whether an edge is available in a given search or not. However, they didn't consult that decision with the inner driver. This caused the bounded search to find a path through the vertex being contracted and no shortcuts were ever added.
+
+Once these two bugs were fixed, the otherwise correct implementation started working. This was truly enlightening (but also frustrating because the bugs were not in the main logic).
+
+#### TODO
+- Add more CH heuristics
+- Add more graph representations to choose from
+- Disable interactive preprocessing for CH on larger graphs - even in the "Run to completion" mode it takes too much time in the browser
+- Improve frontend responsiveness
+- Troubleshoot frontend race conditions that sometimes appear during queries
 
 ### RAPTOR
 
