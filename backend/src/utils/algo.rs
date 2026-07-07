@@ -6,8 +6,9 @@ where
 
     fn step(&mut self, client: &mut C) -> bool;
 
-    fn result(self) -> Self::Result;
-    fn result_dyn(self: Box<Self>) -> Self::Result;
+    fn result(self, client: &mut C) -> Self::Result;
+
+    fn result_dyn(self: Box<Self>, client: &mut C) -> Self::Result;
 }
 
 pub fn map<A, C, E, F, R>(inner: A, map: F) -> impl InteractiveAlgo<C, E, Result = R>
@@ -38,13 +39,13 @@ where
     }
 
     #[inline(always)]
-    fn result(self) -> Self::Result {
-        (self.map)(self.inner.result())
+    fn result(self, client: &mut C) -> Self::Result {
+        (self.map)(self.inner.result(client))
     }
 
     #[inline(always)]
-    fn result_dyn(self: Box<Self>) -> Self::Result {
-        (self.map)(self.inner.result())
+    fn result_dyn(self: Box<Self>, client: &mut C) -> Self::Result {
+        self.result(client)
     }
 }
 

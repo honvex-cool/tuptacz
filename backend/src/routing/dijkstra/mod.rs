@@ -27,6 +27,8 @@ where
     backward: Option<Controller<G::V, G::E, D, H, T>>,
     direction_policy: DP,
     termination_policy: TP,
+    num_settled_vertices: usize,
+    num_inspected_edges: usize,
 }
 
 pub type Queue<D, T> = Pq<VertexId, (D, D), pq::Min, T>;
@@ -94,9 +96,12 @@ where
             backward,
             direction_policy,
             termination_policy,
+            num_settled_vertices: 0,
+            num_inspected_edges: 0,
         }
     }
 
+    #[inline(always)]
     fn highlight_source<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
@@ -110,6 +115,7 @@ where
         });
     }
 
+    #[inline(always)]
     fn highlight_visited<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
@@ -123,6 +129,7 @@ where
         });
     }
 
+    #[inline(always)]
     fn highlight_awaiting<C>(vertex: VertexView<G::V>, client: &mut C)
     where
         C: EventClient<GraphEvent<G::V, G::E>>,
@@ -133,6 +140,20 @@ where
                 mode: HighlightMode::Awaiting,
             },
             comment: "Put vertex to queue".to_owned(),
+        });
+    }
+
+    #[inline(always)]
+    fn emit_query_summary<C>(&self, client: &mut C)
+    where
+        C: EventClient<GraphEvent<G::V, G::E>>,
+    {
+        client.consume(GraphEvent {
+            action: GraphAction::QuerySummary {
+                num_settled_vertices: self.num_settled_vertices,
+                num_inspected_edges: self.num_inspected_edges,
+            },
+            comment: "Summary of the query phase".to_owned(),
         });
     }
 }
@@ -187,6 +208,8 @@ where
 
         let vertex = self.graph.get_vertex(id);
 
+        self.num_settled_vertices += 1;
+
         if total_distance != controller.search.driver.get_distance(vertex) {
             return true;
         }
@@ -210,6 +233,7 @@ where
                 &mut self.meeting_vertex,
                 controller,
                 other_controller.map(|c| c.search.driver.get_distance(edge_end)),
+                &mut self.num_inspected_edges,
                 client,
             )
         };
@@ -222,7 +246,8 @@ where
         true
     }
 
-    fn result(self) -> Self::Result {
+    fn result(self, client: &mut C) -> Self::Result {
+        self.emit_query_summary(client);
         SearchResult {
             forward: self.forward.search,
             backward: self.backward.map(|backward| backward.search),
@@ -231,13 +256,8 @@ where
         }
     }
 
-    fn result_dyn(self: Box<Self>) -> Self::Result {
-        SearchResult {
-            forward: self.forward.search,
-            backward: self.backward.map(|backward| backward.search),
-            bound: self.bound,
-            meeting_id: self.meeting_vertex,
-        }
+    fn result_dyn(self: Box<Self>, client: &mut C) -> Self::Result {
+        self.result(client)
     }
 }
 
@@ -257,6 +277,7 @@ where
         meeting_vertex: &mut Option<VertexId>,
         controller: &mut Controller<G::V, G::E, D, H, T>,
         remaining_distance: Option<D::Distance>,
+        num_inspected_edges: &mut usize,
         client: &mut C,
     ) where
         C: EventClient<GraphEvent<G::V, G::E>>,
@@ -270,6 +291,8 @@ where
         if !controller.search.driver.should_consider_edge(edge) {
             return;
         };
+
+        *num_inspected_edges += 1;
 
         let neighbor = edge.end;
         let neighbor_distance = controller.search.driver.get_distance(neighbor);

@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-pub type Epoch = usize;
+pub type Epoch = u64;
 
 pub const STARTING_EPOCH: Epoch = 0;
 
@@ -40,15 +40,18 @@ impl<'a, T> Staged<'a, T>
 where
     T: Copy,
 {
+    #[inline(always)]
     pub fn get(&self, index: usize) -> T {
         self.refresh(index)
     }
 
+    #[inline(always)]
     pub fn get_mut(&mut self, index: usize) -> &mut T {
         self.refresh(index);
         self.items[index].get_mut()
     }
 
+    #[inline(always)]
     fn refresh(&self, index: usize) -> T {
         let time_stamp_cell = &self.time_stamps[index];
         let item_cell = &self.items[index];

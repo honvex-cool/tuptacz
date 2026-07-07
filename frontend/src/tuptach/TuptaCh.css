@@ -5,3 +5,15 @@
     padding: 10px;
     width: 350px;
 }
+
+.info-box {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 10px;
+    width: 250px;
+}
+
+.details-box {
+  margin-left: 16px;
+}
