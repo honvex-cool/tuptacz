@@ -1,3 +1,6 @@
 target/
-backend/osm/
-backend/gtfs/
+osm/*.osm.pbf
+osm/*.bin
+osm/*.json
+gtfs/*.zip
+gtfs/*.txt

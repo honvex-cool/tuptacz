@@ -12,4 +12,4 @@ RUN ./update-osm.sh
 WORKDIR /app
 RUN cargo install cargo-watch
 EXPOSE 3000
-CMD ["cargo", "watch", "-x", "run"]
+CMD ["cargo", "watch", "-x", "run", "--ignore", "osm/*", "--ignore", "gtfs/*"]
