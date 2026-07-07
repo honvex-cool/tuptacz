@@ -27,11 +27,11 @@ Alternatively you can follow the below instructions to run the frontend and the 
 ### Backend
 
 0. Install Rust: [Instructions](https://rust-lang.org/tools/install/).
-1. Make sure that port `3000` on `localhost` is free.
+1. Make sure that ports `3000` and `3001` on `localhost` are free.
 
-    By default, the backend will be served on that port.
+    By default, the backend will be served on these ports.
 
-    Alternatively, you can edit the source to pick a different port.
+    Alternatively, you can edit the source to pick different ports.
 2. Run backend:
     ```bash
     cd backend
