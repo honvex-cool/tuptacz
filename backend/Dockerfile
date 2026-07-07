@@ -10,5 +10,6 @@ WORKDIR /app/osm
 RUN ./update-osm.sh
 
 WORKDIR /app
+RUN cargo build --release
 EXPOSE 3000
-CMD ["cargo", "run"]
+CMD ["./target/release/tuptacz"]
