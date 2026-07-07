@@ -18,6 +18,8 @@ async fn health_check_handler() -> &'static str {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    eprintln!("Please wait for the data to load and for the server to start...");
+
     let routing_info = loading::load_routing_info().unwrap();
     let transit_info = loading::load_transit_info().unwrap();
     let state = Arc::new(app::State {

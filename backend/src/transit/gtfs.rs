@@ -205,7 +205,9 @@ where
 }
 
 pub fn load_gtfs(path: &Path) -> Gtfs {
-    Gtfs {
+    eprintln!("Loading GTFS from {}", path.display());
+
+    let gtfs = Gtfs {
         stops: load(&path.join("stops.txt")),
         shapes: load(&path.join("shapes.txt")),
         routes: load(&path.join("routes.txt")),
@@ -213,5 +215,9 @@ pub fn load_gtfs(path: &Path) -> Gtfs {
         stop_times: load(&path.join("stop_times.txt")),
         calendar: load(&path.join("calendar.txt")),
         calendar_dates: load(&path.join("calendar_dates.txt")),
-    }
+    };
+
+    eprintln!("GTFS loaded");
+
+    gtfs
 }

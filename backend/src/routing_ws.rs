@@ -359,6 +359,6 @@ async fn control_event(event: ControlEvent, sender: &mut Sender) {
 async fn server_event(event: ServerEvent, sender: &mut Sender) {
     eprintln!("Sent: {:?}", event);
     let serialized = serde_json::to_string(&event).unwrap();
-    let message = Message::Text(serialized.into());
+    let message = Message::Text(serialized);
     sender.send(message).await.unwrap();
 }

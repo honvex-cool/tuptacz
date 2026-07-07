@@ -216,7 +216,7 @@ fn reconstruct_journey(
 
     Some(Journey {
         legs,
-        arrival_time: arrival_time,
+        arrival_time,
     })
 }
 
@@ -235,7 +235,7 @@ fn deduplicate(journeys: Vec<Journey>) -> Vec<Journey> {
     for journey in journeys.iter () {
         let mut dominated = false;
         for j in journeys.iter() {
-            if dominates(j, &journey) {
+            if dominates(j, journey) {
                 dominated = true;
                 break;
             }
@@ -280,7 +280,7 @@ pub fn search_journeys(
 
     let mut search = Search {
         earliest_arrival,
-        parent: parent,
+        parent,
     };
 
     let mut journeys = Vec::new();
@@ -288,7 +288,7 @@ pub fn search_journeys(
         round(&transit_view, &mut search);
 
         for end_stop in &transit_info.meta_stops[end.0].stops {
-            if let Some(journey) = reconstruct_journey(&transit_info, &search, *end_stop, i + 1) {
+            if let Some(journey) = reconstruct_journey(transit_info, &search, *end_stop, i + 1) {
                 journeys.push(journey);
             }
         }

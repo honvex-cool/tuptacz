@@ -40,7 +40,7 @@ impl<'a> TransitView<'a> {
     }
 
     pub fn trip_by_id(&self, trip_id: TripId) -> &Trip {
-        &self.transit_info.get_trip(trip_id)
+        self.transit_info.get_trip(trip_id)
     }
 
     pub fn depature_from(&self, trip_id: TripId, stop_idx: usize) -> ServiceTime {
