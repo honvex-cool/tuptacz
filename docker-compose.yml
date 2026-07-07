@@ -7,6 +7,7 @@ services:
     build:
       context: backend
       dockerfile: ./Dockerfile
+    restart: on-failure
   nginx:
     build:
       context: nginx

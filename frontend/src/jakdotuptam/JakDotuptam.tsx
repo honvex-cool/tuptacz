@@ -4,9 +4,9 @@ import "../core/Common.css"
 import "./JakDotuptam.css"
 
 import { MapContainer, Polyline, TileLayer, Marker, Tooltip, CircleMarker, Popup } from 'react-leaflet'
-import L from 'leaflet'
+import L, { type LatLngExpression } from 'leaflet'
 
-import { journeyArrivalTime, journeyDepartureTime, type Journey, type JourneyLeg, type JourneyStop, type RouteType, type Shape, type Stop, type Trip } from "./model"
+import { journeyArrivalTime, journeyDepartureTime, type Journey, type JourneyLeg, type JourneyStop, type RouteType, type Shape, type Stop } from "./model"
 import Select from "react-select"
 import "dayjs/locale/pl";
 import dayjs from "dayjs"
@@ -37,10 +37,6 @@ function getShapes() {
     return apiGet("/transit/shapes").then(res => res.json())
 }
 
-async function getTrip(trip_id: number): Promise<Trip> {
-    return apiGet(`/transit/trip/${trip_id}`).then(res => res.json())
-}
-
 const LINE_COLORS = [
     "#ff0211",
     "#bc6700",
@@ -63,8 +59,8 @@ function LegPolyline(props: { leg: JourneyLeg, index: number }) {
     return (
         <>
             <Polyline key={props.index}
-                positions={positions} color={color} weight={10}>
-                <Marker position={mid} icon={transparentIcon}>
+                positions={positions as LatLngExpression[]} color={color} weight={10}>
+                <Marker position={mid as LatLngExpression} icon={transparentIcon}>
                     <Tooltip permanent direction="center" offset={[0, 0]}>
                         <FontAwesomeIcon icon={icon} />
                         {props.leg.route_name}
@@ -142,7 +138,7 @@ function JourneySummaryLine(props: { leg: JourneyLeg, index: number }) {
     )
 }
 
-function pluralizeStops(stops) {
+function pluralizeStops(stops: number) {
     if (stops === 1) {
         return "przystanek"
     } else if (10 < stops % 100 && stops % 100 < 20) {
@@ -209,7 +205,7 @@ function JourneyDetails(props: { journey: Journey }) {
     )
 }
 
-function JourneySummary(props: { journey: Journey, isActive: boolean, onClick }) {
+function JourneySummary(props: { journey: Journey, isActive: boolean, onClick: any }) {
     const journey = props.journey;
     if (!journey) {
         return (<></>)
@@ -243,15 +239,15 @@ function JourneySummary(props: { journey: Journey, isActive: boolean, onClick })
 }
 
 export default function JakDotuptam() {
-    const [shapes, setShapes] = useState<Shape[]>([]);
+    const [_, setShapes] = useState<Shape[]>([]);
     const [stops, setStops] = useState<Stop[]>([]);
     const [start, setStart] = useState<Stop>();
     const [end, setEnd] = useState<Stop>();
     const [date, setDate] = useState<Dayjs | null>(dayjs())
     const [journeys, setJourneys] = useState<Journey[]>([]);
 
-    const [activeJourney, setActiveJourney] = useState<Journey>(null);
-    const [activeJourneyIndex, setActiveJourneyIndex] = useState<number>(null);
+    const [activeJourney, setActiveJourney] = useState<Journey>(null!);
+    const [activeJourneyIndex, setActiveJourneyIndex] = useState<number>(null!);
 
     useEffect(() => {
         getShapes().then(setShapes)
@@ -266,9 +262,9 @@ export default function JakDotuptam() {
         console.log(start, end, date)
 
         apiPost("/transit/search", {
-            start: start.id,
-            end: end.id,
-            departure_time: date.format("YYYY-MM-DDTHH:mm:ssZ")
+            start: start!.id,
+            end: end!.id,
+            departure_time: date!.format("YYYY-MM-DDTHH:mm:ssZ")
         },
         )
             .then(res => res.json())
@@ -285,7 +281,7 @@ export default function JakDotuptam() {
             })}
                 onChange={(newValue) => {
                     console.log(newValue)
-                    setStart(newValue.value)
+                    setStart(newValue!.value)
                 }}
             />
             <Select options={stops.map(stop => {
@@ -296,7 +292,7 @@ export default function JakDotuptam() {
             })}
                 onChange={(newValue) => {
                     console.log(newValue)
-                    setEnd(newValue.value)
+                    setEnd(newValue!.value)
                 }}
             />
 
